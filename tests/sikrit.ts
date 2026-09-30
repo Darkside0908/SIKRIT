@@ -24,6 +24,7 @@ import { expect } from "chai";
 import { readFileSync } from "fs";
 import { FailedTransactionMetadata, LiteSVM, TransactionMetadata } from "litesvm";
 
+import * as client from "../sdk/client";
 import * as kit from "../sdk/kit";
 import * as liveness from "../sdk/liveness";
 import idl from "../target/idl/sikrit.json";
@@ -365,6 +366,138 @@ describe("SIKRIT — privacy-preserving dead man's switch", () => {
 
       expect(liveness.deriveLivenessSecret(sign())).to.equal(x);
       expect(bytesToHex(liveness.commitmentFromSecret(x))).to.not.equal(bytesToHex(wallet.publicKey.toBytes()));
+    });
+  });
+
+  describe("browser client (sdk/client.ts) — byte-identical to the Anchor client", () => {
+    it("derives the IDL's discriminators, error table and exact account size", async () => {
+      const byName = new Map(idl.instructions.map((ix) => [ix.name, ix.discriminator]));
+      const expected: Record<string, keyof typeof client.DISCRIMINATORS> = {
+        create_capsule: "createCapsule",
+        heartbeat: "heartbeat",
+        trigger_claim: "triggerClaim",
+        guardian_confirm: "guardianConfirm",
+        guardian_veto: "guardianVeto",
+        claim: "claim",
+      };
+      expect([...byName.keys()].sort()).to.deep.equal(Object.keys(expected).sort());
+      for (const [name, key] of Object.entries(expected)) {
+        expect(Array.from(client.DISCRIMINATORS[key])).to.deep.equal(byName.get(name));
+      }
+      expect(Array.from(client.DISCRIMINATORS.capsuleAccount)).to.deep.equal(idl.accounts[0].discriminator);
+      expect(client.PROGRAM_ERRORS.map((e, i) => [6000 + i, e.name])).to.deep.equal(idl.errors.map((e) => [e.code, e.name]));
+      expect(client.PROGRAM_ID.equals(PROGRAM_ID)).to.equal(true);
+
+      const { capsule } = await h.newCapsule();
+      expect(h.svm.getAccount(capsule.address)!.data.length).to.equal(client.CAPSULE_ACCOUNT_SIZE);
+    });
+
+    it("builds every instruction exactly like the Anchor client (data and account metas)", async () => {
+      const { capsule } = await h.newCapsule();
+      const payer = h.wallet();
+      const proof = liveness.proveLiveness(capsule.secret, PROGRAM_ID, capsule.address, 0);
+      const guardian = capsule.guardians[0].publicKey;
+      const pairs: [TransactionInstruction, TransactionInstruction][] = [
+        [
+          client.createCapsuleIx({ payer: payer.publicKey, commitment: capsule.commitment, config: capsule.config, proof: capsule.registrationProof }),
+          await h.program.methods
+            .createCapsule(Array.from(capsule.commitment), toAnchorConfig(capsule.config), capsule.registrationProof)
+            .accountsStrict({ capsule: capsule.address, payer: payer.publicKey, systemProgram: SystemProgram.programId })
+            .instruction(),
+        ],
+        [
+          client.heartbeatIx({ capsule: capsule.address, proof }),
+          await h.program.methods.heartbeat(proof).accountsStrict({ capsule: capsule.address }).instruction(),
+        ],
+        [
+          client.triggerClaimIx({ capsule: capsule.address }),
+          await h.program.methods.triggerClaim().accountsStrict({ capsule: capsule.address }).instruction(),
+        ],
+        [
+          client.guardianConfirmIx({ capsule: capsule.address, guardian }),
+          await h.program.methods.guardianConfirm().accountsStrict({ capsule: capsule.address, guardian }).instruction(),
+        ],
+        [
+          client.guardianVetoIx({ capsule: capsule.address, guardian }),
+          await h.program.methods.guardianVeto().accountsStrict({ capsule: capsule.address, guardian }).instruction(),
+        ],
+        [
+          client.claimIx({ capsule: capsule.address, heir: capsule.heir.publicKey }),
+          await h.program.methods.claim().accountsStrict({ capsule: capsule.address, heir: capsule.heir.publicKey }).instruction(),
+        ],
+      ];
+      for (const [ours, anchor] of pairs) {
+        expect(ours.programId.equals(anchor.programId)).to.equal(true);
+        expect(bytesToHex(ours.data)).to.equal(bytesToHex(anchor.data));
+        expect(ours.keys.map((k) => [k.pubkey.toBase58(), k.isSigner, k.isWritable])).to.deep.equal(
+          anchor.keys.map((k) => [k.pubkey.toBase58(), k.isSigner, k.isWritable]),
+        );
+      }
+    });
+
+    it("runs a whole lifecycle with its own instructions and decodes every state like the Anchor coder", async () => {
+      const heir = h.wallet();
+      const guardians = [h.wallet(), h.wallet()];
+      const secret = liveness.generateLivenessSecret();
+      const commitment = liveness.commitmentFromSecret(secret);
+      const [address] = liveness.capsulePda(PROGRAM_ID, commitment);
+      const config: liveness.CapsuleConfigInput = {
+        heir: heir.publicKey,
+        heartbeatInterval: 60n,
+        gracePeriod: 60n,
+        guardians: guardians.map((g) => g.publicKey),
+        guardianThreshold: 1,
+        shareHashes: [sha256(utf8ToBytes("a")), sha256(utf8ToBytes("b")), sha256(utf8ToBytes("c"))],
+      };
+      const decodeBoth = () => {
+        const raw = Uint8Array.from(h.svm.getAccount(address)!.data);
+        const ours = client.decodeCapsule(raw);
+        const anchor = h.capsule(address);
+        expect(bytesToHex(ours.commitment)).to.equal(bytesToHex(Uint8Array.from(anchor.commitment)));
+        expect(ours.heir.equals(anchor.heir)).to.equal(true);
+        expect(ours.guardians.map(String)).to.deep.equal(anchor.guardians.map(String));
+        expect([ours.guardianThreshold, ours.approvals, ours.vetoes, ours.bump]).to.deep.equal(
+          [anchor.guardianThreshold, anchor.approvals, anchor.vetoes, anchor.bump]);
+        expect([ours.heartbeatInterval, ours.gracePeriod, ours.lastHeartbeat, ours.claimTriggeredAt, ours.heartbeatNonce].map(String))
+          .to.deep.equal([anchor.heartbeatInterval, anchor.gracePeriod, anchor.lastHeartbeat, anchor.claimTriggeredAt, anchor.heartbeatNonce].map(String));
+        expect(ours.shareHashes.map(bytesToHex)).to.deep.equal(anchor.shareHashes.map((x) => bytesToHex(Uint8Array.from(x))));
+        expect(ours.status).to.equal(statusOf(anchor));
+        return ours;
+      };
+
+      const proof = liveness.proveRegistration(secret, PROGRAM_ID, address, config);
+      const payer = h.wallet();
+      expectSuccess(h.send(client.createCapsuleIx({ payer: payer.publicKey, commitment, config, proof }), [payer]));
+      expect(decodeBoth().status).to.equal("active");
+
+      h.warp(30);
+      const beat = liveness.proveLiveness(secret, PROGRAM_ID, address, decodeBoth().heartbeatNonce);
+      expectSuccess(h.send(client.heartbeatIx({ capsule: address, proof: beat }), [h.wallet()]));
+      expect(client.timeline(decodeBoth(), h.now()).canTrigger).to.equal(false);
+      expectError(h.send(client.triggerClaimIx({ capsule: address }), [h.wallet()]), "HeartbeatNotExpired");
+
+      h.warp(60);
+      expect(client.timeline(decodeBoth(), h.now()).canTrigger).to.equal(true);
+      expectSuccess(h.send(client.triggerClaimIx({ capsule: address }), [h.wallet()]));
+      expectSuccess(h.send(client.guardianVetoIx({ capsule: address, guardian: guardians[1].publicKey }), [guardians[1]]));
+      expect(decodeBoth().vetoes).to.equal(0b10);
+
+      h.warp(60);
+      expectSuccess(h.send(client.triggerClaimIx({ capsule: address }), [h.wallet()]));
+      expectSuccess(h.send(client.guardianConfirmIx({ capsule: address, guardian: guardians[0].publicKey }), [guardians[0]]));
+      let state = decodeBoth();
+      expect(state.approvals).to.equal(0b01);
+      expect(client.timeline(state, h.now())).to.include({ canVeto: true, canClaim: false, approvalCount: 1 });
+      const early = h.send(client.claimIx({ capsule: address, heir: heir.publicKey }), [heir]);
+      expectError(early, "GracePeriodNotExpired");
+      expect(client.explainError(new Error(logsOf(early as FailedTransactionMetadata)))).to.match(/grace period has not ended/);
+
+      h.warp(60);
+      state = decodeBoth();
+      expect(client.timeline(state, h.now())).to.include({ canVeto: false, canClaim: true });
+      expectSuccess(h.send(client.claimIx({ capsule: address, heir: heir.publicKey }), [heir]));
+      expect(decodeBoth().status).to.equal("claimed");
+      expect(() => client.decodeCapsule(new Uint8Array(client.CAPSULE_ACCOUNT_SIZE))).to.throw(/not a SIKRIT capsule/);
     });
   });
 
