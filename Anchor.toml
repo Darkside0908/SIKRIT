@@ -1,0 +1,23 @@
+[toolchain]
+anchor_version = "0.30.2"
+solana_version = "1.18.17"
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.devnet]
+sikrit = "FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F"
+
+[programs.localnet]
+sikrit = "FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F"
+
+[registry]
+url = "https://api.apr.dev"
+
+[provider]
+cluster = "Localnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "npm test"

@@ -1,0 +1,11 @@
+node_modules/
+target/
+.anchor/
+test-ledger/
+*.keypair.json
+id.json
+.env
+.env.*
+loop/logs/
+.next/
+dist/

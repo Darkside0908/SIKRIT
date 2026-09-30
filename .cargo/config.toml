@@ -1,0 +1,7 @@
+# curve25519-dalek 4.x auto-enables its AVX-512/IFMA backend when compiled by a nightly rustc on
+# x86_64, which fails on the pinned nightly-2024-01-30 used by Anchor 0.30.x IDL builds.
+# Its build script reads the backend choice from this variable (normally derived from
+# `--cfg curve25519_dalek_backend=...`); RUSTFLAGS can't be used because the Anchor IDL build
+# overwrites it. SBF builds already use the serial backend, so this only affects host builds.
+[env]
+CARGO_CFG_CURVE25519_DALEK_BACKEND = "serial"
