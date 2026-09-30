@@ -16,8 +16,8 @@
 ```
 
 - **On-chain (Solana/Anchor):** vault state, timer, claim/veto logic, verifikasi Schnorr proof.
-- **Off-chain (client-side):** Shamir Secret Sharing, enkripsi share ke pubkey heir, generate Schnorr proof.
-- **Storage:** share terenkripsi di Arweave/IPFS (off-chain); on-chain hanya simpan hash & commitment.
+- **Off-chain (client-side):** Shamir Secret Sharing, enkripsi share (HPKE) ke kunci inbox heir & guardian, generate Schnorr proof.
+- **Storage:** kit terenkripsi dipegang para pihak (off-chain); on-chain hanya menyimpan hash share & commitment.
 
 ---
 
@@ -69,36 +69,72 @@ pub struct Capsule {
 
 ---
 
-## 3. Komponen Off-Chain (Client-Side)
+## 3. Komponen Off-Chain (Client-Side) — `sdk/`
 
-### 3.1 Shamir Secret Sharing (SSS)
+Semua kriptografi client ditulis dalam TypeScript murni di atas primitive teraudit (`@noble/curves`, `@noble/hashes`, `@noble/ciphers`, `shamir-secret-sharing`), sehingga kode yang sama jalan di browser dan di test tanpa WASM. Setiap primitive dikunci known-answer vector eksternal di `tests/sdk.ts`.
 
-- **Threshold:** `(k, n)` — misal `(2, 3)`.
-- **Distribusi share:**
-  - **Share A:** disimpan owner (device).
-  - **Share B:** dienkripsi ke pubkey heir → dikirim ke heir.
-  - **Share C:** dienkripsi → disimpan di Arweave/IPFS (inert tanpa share lain).
-- **Rekonstruksi:** heir butuh `k` share (B + C) untuk recover seed.
+### 3.1 Kunci yang dipakai
 
-### 3.2 Enkripsi Share
+| Kunci | Pemilik | Diturunkan dari | Dipakai untuk |
+|---|---|---|---|
+| Liveness `x`, `P = x·G` | Pemilik | tanda tangan wallet atas `KEYGEN_MESSAGE` (`sdk/liveness.ts`) | heartbeat & proof-of-possession; `P` = seed PDA |
+| Inbox X25519 | Ahli waris & tiap guardian | tanda tangan wallet atas `INBOX_MESSAGE` → HPKE `DeriveKeyPair` (`sdk/kit.ts`) | menerima share terenkripsi |
+| Data key (DEK) 32 byte | — (acak, sekali pakai) | CSPRNG | mengenkripsi rahasia; yang di-split Shamir adalah DEK |
 
-- **Algoritma:** ECIES (Elliptic Curve Integrated Encryption Scheme) atau X25519 + AES-256-GCM.
-- **Kunci:** public key ahli waris (dan/atau guardian) — hanya holder private key terkait yang bisa decrypt.
+Tanda tangan Ed25519 deterministik (RFC 8032), jadi kunci bisa diturunkan ulang bertahun-tahun kemudian dari wallet yang sama tanpa backup. Onboarding (`createInbox`) meminta tanda tangan dua kali dan menolak wallet yang tanda tangannya tidak deterministik (sebagian wallet MPC).
 
-### 3.3 Generate Schnorr Proof (WASM)
+### 3.2 Inbox certificate (anti key-substitution)
 
-- Modul Rust di-compile ke WASM, jalan di browser.
-- Owner menandatangani challenge non-interaktif dengan private key; output `(R, s)` di-submit ke `heartbeat`.
+Ahli waris/guardian mengirim ke pemilik sebuah **invite** `sikrit-invite:v1:<hex(wallet ‖ inbox ‖ sig)>`, dengan `sig` = tanda tangan wallet atas `"SIKRIT inbox certificate v1: <hex inbox>"`. Pemilik memverifikasinya sebelum menyegel apa pun, dan wallet yang sama didaftarkan on-chain sebagai `heir`/`guardians`. Guardian memverifikasi sertifikat ahli waris terhadap `capsule.heir` on-chain sebelum me-release share. Tanpa ini, penyerang yang menukar kunci inbox di jalur komunikasi (atau di file kit) bisa menerima share.
+
+### 3.3 Capsule kit (`sdk/kit.ts`)
+
+```
+dek      ← 32 byte acak
+payload  = nonce ‖ XChaCha20-Poly1305(dek, nonce, aad = "SIKRIT:payload:v1" ‖ P ‖ k ‖ n)(rahasia)
+share_i  = Shamir k-of-n atas dek, GF(2^8)                      (33 byte: y ‖ x)
+sealed_i = HPKE.Seal(inbox_i, info = "SIKRIT:share:v1" ‖ P, aad = i)(share_i)
+hash_i   = SHA-256("SIKRIT:share-hash:v1" ‖ P ‖ share_i)  →  CapsuleConfig.share_hashes[i]
+```
+
+- **HPKE** (RFC 9180, base mode): DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, ChaCha20-Poly1305 — bentuk terstandar dari "ECIES X25519". Diverifikasi byte-per-byte terhadap RFC 9180 Appendix A.2.1.
+- **Shamir**: library `shamir-secret-sharing` (Privy; diaudit Cure53 & Zellic), polinomial AES `x⁸+x⁴+x³+x+1`. Yang di-split hanya DEK acak (rekomendasi library itu sendiri), sehingga share berukuran tetap dan tag AEAD payload mengautentikasi hasil rekonstruksi.
+- **Hash share on-chain** ikut ditandatangani proof-of-possession `create_capsule` (bagian dari `Borsh(CapsuleConfig)`), jadi rantai autentikasinya: `x` → config → hash → share.
+
+**Kustodi share (menjawab SIK-11):**
+
+| Share | Pemegang | Keterangan |
+|---|---|---|
+| `share_0` | Ahli waris | sendirian < k → nol informasi (perfect secrecy) |
+| `share_1..n−1` | Satu per guardian | `k − 1` = kuorum guardian (idealnya = `guardian_threshold` on-chain) |
+
+Contoh: 3 guardian, `guardian_threshold = 2` → `k = 3`, `n = 4`. Ahli waris butuh share-nya sendiri + 2 share guardian. Tiga guardian bersama-sama juga bisa merekonstruksi (jalan pemulihan kalau ahli waris kehilangan wallet).
+
+Kit (JSON ~3 KB untuk seed phrase 12 kata + 3 guardian) dikirim off-chain ke semua pemegang. Kit tidak pernah ditaruh di storage publik permanen: ciphertext tidak ikut on-chain, hanya hash.
+
+### 3.4 Release & recovery
+
+1. Semua pihak memverifikasi kit terhadap state on-chain (`verifyKit`): commitment, `share_hashes`, dan wallet heir/guardian persis sama dan berurutan.
+2. Setelah status `Claimed`, guardian membuka share-nya dan me-**re-seal** ke kunci inbox ahli waris (`releaseShare`, info `"SIKRIT:release:v1" ‖ P`). SDK menolak release jika kapsul belum `Claimed`, jika kit tidak cocok dengan chain, jika target tidak disertifikasi wallet `heir` on-chain, atau jika yang di-release bukan share guardian.
+3. Ahli waris membuka tiap release (`openRelease`), mengautentikasi share terhadap hash yang ter-commit, lalu `recoverSecret` menggabungkan `k` share dan mendekripsi payload. Share palsu ditolak dengan pesan eksplisit, bukan menghasilkan rahasia yang salah diam-diam.
+
+Urutan "release hanya setelah `Claimed`" adalah janji guardian yang dijalankan client, bukan paksaan kriptografis. Asumsi kepercayaan yang tersisa ditulis eksplisit: kuorum guardian tidak berkolusi dengan ahli waris sebelum pemilik wafat.
+
+### 3.5 Generate Schnorr Proof
+
+`sdk/liveness.ts` (TypeScript, `@noble/curves`) — tidak perlu WASM. Nonce di-hedge (deterministik atas `x` + transkrip + 32 byte acak). Format transkrip dikunci known-answer vector lintas bahasa (TS prover ↔ Rust verifier).
 
 ---
 
 ## 4. Data Flow Lengkap (Lifecycle)
 
-1. **Setup:** Owner split seed → SSS → enkripsi share → publish `create_capsule` (commitment + hash).
-2. **Alive:** Owner `heartbeat` tiap interval (Schnorr PoK) → timer reset, **tanpa bocor metadata**.
-3. **Timeout:** owner berhenti heartbeat → siapa pun `trigger_claim` → `claim_window` terbuka.
-4. **Guardian:** N-of-M `guardian_confirm` (atau `veto` kalau false-trigger).
-5. **Claim:** Heir `claim` → ambil share terenkripsi dari Arweave → decrypt → gabung SSS → recover.
+1. **Onboarding:** ahli waris & guardian membuat inbox key dari wallet mereka dan mengirim invite bertanda tangan ke pemilik.
+2. **Setup:** pemilik menurunkan kunci liveness dari wallet → `sealCapsuleKit` (rahasia → DEK → Shamir → HPKE ke tiap pemegang) → `create_capsule` (commitment + `share_hashes` + proof-of-possession), dibayar fee payer terpisah → kit dibagikan off-chain.
+3. **Alive:** pemilik `heartbeat` tiap interval (Schnorr PoK, di-relay fee payer mana pun) → timer reset; tidak ada wallet/identitas pemilik di transaksi.
+4. **Timeout:** pemilik berhenti heartbeat → siapa pun `trigger_claim` → grace period berjalan (pemilik masih bisa membatalkan dengan heartbeat).
+5. **Guardian:** kuorum `guardian_confirm` (atau `guardian_veto` kalau false-trigger).
+6. **Claim:** ahli waris `claim` → status `Claimed`.
+7. **Release & recovery:** guardian melihat `Claimed` → re-seal share ke inbox ahli waris → ahli waris verifikasi hash → gabungkan → dekripsi rahasia.
 
 ---
 
@@ -106,29 +142,32 @@ pub struct Capsule {
 
 | Ancaman | Mitigasi |
 |---|---|
-| Drainer / phishing transaksi | Tidak ada nilai tersimpan on-chain; hanya hash/commitment. Share di Arweave terenkripsi. |
-| Stalker lacak "kapan terakhir check-in" | Schnorr PoK — heartbeat tidak reveal identitas/alamat/timestamp. |
-| False-trigger (owner masih hidup) | Guardian veto + grace period. |
-| Server mati (single point of failure) | Tidak ada server kritis; Arweave permanen + program on-chain. |
-| Share bocor | Enkripsi ECIES; satu share bocor = zero information (SSS). |
-| Double-claim | State `Claimed` + PDA map mencegah klaim ganda. |
+| Drainer / phishing transaksi | Tidak ada nilai tersimpan on-chain; hanya hash/commitment. |
+| Stalker menautkan heartbeat ke identitas | PDA dari kunci liveness khusus, tanpa field/signer wallet pemilik; heartbeat bisa di-relay. Waktu heartbeat tetap publik (R1 di security review). |
+| Replay bukti heartbeat | Challenge terikat `heartbeat_nonce`, kapsul, program, domain. |
+| False-trigger (pemilik masih hidup) | Heartbeat membatalkan klaim sampai ahli waris `claim`; veto guardian terbatas dalam grace period. |
+| Ahli waris membuka lebih awal | Ahli waris hanya memegang 1 share (< k); butuh kuorum guardian yang me-release setelah `Claimed`. |
+| Kunci inbox ditukar penyerang (MITM) | Inbox certificate ditandatangani wallet heir/guardian yang terdaftar on-chain; diverifikasi saat seal & release. |
+| Guardian jahat mengirim share palsu | Hash share on-chain (ditandatangani proof-of-possession pemilik) → share palsu ditolak sebelum digabung. |
+| Server mati (single point of failure) | Tidak ada server: program on-chain + kit dipegang para pihak. |
+| Share bocor | Share dienkripsi HPKE ke pemegangnya; < k share = nol informasi (Shamir). |
+| Double-claim | State `Claimed` terminal. |
 
 ---
 
 ## 6. Stack & Dependensi
 
-- **Program:** Rust + Anchor (Solana)
-- **Kriptografi:** `sha2`, `curve25519-dalek` (Schnorr), `shamir` / custom SSS, `aes-gcm`
-- **Frontend:** Next.js (React) + `@solana/web3.js` / `@solana/wallet-adapter`
-- **Storage:** Arweave (via Bundlr/Irys) atau IPFS
-- **ZK WASM:** Rust → `wasm-bindgen` / `wasm-pack`
+- **Program:** Rust + Anchor 0.30.1 (Solana 1.18.17); syscall curve25519 untuk operasi titik, `curve25519-dalek` untuk aritmetika skalar, `sha2`
+- **SDK client:** `@noble/curves` (Ed25519/X25519), `@noble/hashes` (SHA-2, HKDF), `@noble/ciphers` (ChaCha20-Poly1305, XChaCha20-Poly1305), `shamir-secret-sharing`
+- **Frontend:** React + `@solana/web3.js` / `@solana/wallet-adapter`
+- **Transport kit:** file/tautan off-chain (MVP); opsional storage terenkripsi (Arweave/IPFS) di roadmap
 
 ---
 
 ## 7. Milestone Teknis (MVP)
 
 1. **M1 — Program Core:** `create_capsule`, `heartbeat`, `trigger_claim`, `claim` di devnet + unit test.
-2. **M2 — Kriptografi:** SSS + ECIES + Schnorr PoK (WASM) + integrasi ke program.
+2. **M2 — Kriptografi:** SSS + HPKE + Schnorr PoK (TypeScript) + integrasi ke program. ✅
 3. **M3 — Frontend:** flow setup → heartbeat dashboard → claim flow.
 4. **M4 — E2E:** deploy devnet, simulasi "kematian" (stop heartbeat) → klaim sukses.
 5. **M5 — Pitch:** deck + video 3 menit + demo live.

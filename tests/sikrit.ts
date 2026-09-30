@@ -23,8 +23,8 @@ import {
 import { expect } from "chai";
 import { readFileSync } from "fs";
 import { FailedTransactionMetadata, LiteSVM, TransactionMetadata } from "litesvm";
-import { combine, split } from "shamir-secret-sharing";
 
+import * as kit from "../sdk/kit";
 import * as liveness from "../sdk/liveness";
 import idl from "../target/idl/sikrit.json";
 import type { Sikrit } from "../target/types/sikrit";
@@ -59,6 +59,9 @@ interface Capsule {
 
 interface CapsuleOptions {
   secret?: bigint;
+  /** Pre-made heir / guardian wallets (e.g. whose inbox keys a kit was already sealed to). */
+  heir?: Keypair;
+  guardianWallets?: Keypair[];
   guardians?: number;
   threshold?: number;
   interval?: number;
@@ -142,8 +145,8 @@ class Harness {
   }
 
   sampleConfig(opts: CapsuleOptions = {}): { config: liveness.CapsuleConfigInput; heir: Keypair; guardians: Keypair[] } {
-    const heir = this.wallet();
-    const guardians = Array.from({ length: opts.guardians ?? 3 }, () => this.wallet());
+    const heir = opts.heir ?? this.wallet();
+    const guardians = opts.guardianWallets ?? Array.from({ length: opts.guardians ?? 3 }, () => this.wallet());
     const config: liveness.CapsuleConfigInput = {
       heir: heir.publicKey,
       heartbeatInterval: BigInt(opts.interval ?? 30 * DAY),
@@ -749,26 +752,57 @@ describe("SIKRIT — privacy-preserving dead man's switch", () => {
   });
 
   describe("end-to-end: the 'Bapak A' inheritance story", () => {
-    it("seed phrase → Shamir 2-of-3 → 6 months of heartbeats → silence → guardians 2-of-3 → heir recovers the seed", async () => {
+    it("seed phrase → sealed kit → 6 months of heartbeats → silence → guardians 2-of-3 → release → heir recovers the seed", async () => {
       // Bapak A derives his liveness key from a wallet signature: nothing extra to back up.
-      const wallet = Keypair.generate();
-      const signature = ed25519.sign(liveness.KEYGEN_MESSAGE, wallet.secretKey.slice(0, 32));
-      const secret = liveness.deriveLivenessSecret(signature);
+      const sign = (wallet: Keypair) => async (message: Uint8Array) => ed25519.sign(message, wallet.secretKey.slice(0, 32));
+      const secret = liveness.deriveLivenessSecret(await sign(Keypair.generate())(liveness.KEYGEN_MESSAGE));
+      const commitment = liveness.commitmentFromSecret(secret);
 
-      // Shares: #1 stays on his device, #2 goes to the heir now (useless alone), #3 is released
-      // to the heir by the guardians after the on-chain claim. Only share hashes go on-chain;
-      // in production the shares are ECIES-encrypted to their holders first (milestone M2).
+      // His heir and three guardians each derive an inbox key from their own wallet and send him a
+      // wallet-signed invite; he checks every invite before sealing anything to it.
+      const heir = h.wallet();
+      const guardians = [h.wallet(), h.wallet(), h.wallet()];
+      const inboxes = await Promise.all(
+        [heir, ...guardians].map((wallet) => kit.createInbox(wallet.publicKey.toBytes(), sign(wallet))),
+      );
+      const [heirInbox, ...guardianInboxes] = inboxes;
+      const invites = inboxes.map(({ certificate }) => kit.encodeInboxCertificate(certificate));
+      const [heirCertificate, ...guardianCertificates] = invites.map(kit.decodeInboxCertificate);
+
+      // The seed phrase is encrypted under a random key; the key is split so that the heir's share
+      // plus any 2 of the 3 guardians' shares rebuild it (k = 3), and every share is sealed to its
+      // holder. Only the share hashes go on-chain; the kit itself travels off-chain.
       const seedPhrase = "abandon ability able about above absent absorb abstract absurd abuse access accident";
-      const shares = await split(utf8ToBytes(seedPhrase), 3, 2);
+      const sealed = await kit.sealCapsuleKit({
+        secret: utf8ToBytes(seedPhrase),
+        commitment,
+        heir: heirCertificate,
+        guardians: guardianCertificates,
+        threshold: 3,
+      });
+      const portableKit = kit.encodeKit(sealed);
       const { capsule, result } = await h.newCapsule({
         secret,
-        guardians: 3,
+        heir,
+        guardianWallets: guardians,
         threshold: 2,
         interval: 30 * DAY,
         grace: 7 * DAY,
-        shareHashes: shares.map((share) => sha256(share)),
+        shareHashes: sealed.shareHashes,
       });
       expectSuccess(result);
+
+      /** What any participant reads from the chain before acting on the kit. */
+      const chainState = (): kit.CapsuleState => {
+        const account = h.capsule(capsule.address);
+        return {
+          commitment: Uint8Array.from(account.commitment),
+          heir: account.heir.toBytes(),
+          guardians: account.guardians.map((guardian) => guardian.toBytes()),
+          shareHashes: account.shareHashes.map((hash) => Uint8Array.from(hash)),
+          claimed: statusOf(account) === "claimed",
+        };
+      };
 
       // Alive: a heartbeat every month, each relayed by a different throwaway fee payer.
       for (let month = 0; month < 6; month++) {
@@ -778,27 +812,42 @@ describe("SIKRIT — privacy-preserving dead man's switch", () => {
       }
       expect(h.capsule(capsule.address).heartbeatNonce.toNumber()).to.equal(6);
 
+      // The heir checks the kit against the chain, but their own share alone reveals nothing,
+      // and no guardian client will release while the capsule is not claimed.
+      const heirKit = kit.decodeKit(portableKit);
+      kit.verifyKit(heirKit, chainState());
+      const heirShare = kit.openShare(heirKit, 0, heirInbox.keyPair.secretKey);
+      let early: Error | undefined;
+      await kit.recoverSecret(heirKit, [heirShare]).catch((error: Error) => (early = error));
+      expect(early?.message).to.match(/need 3 distinct shares/);
+      const eagerShare = kit.openShare(heirKit, 1, guardianInboxes[0].keyPair.secretKey);
+      expect(() => kit.releaseShare(heirKit, eagerShare, chainState())).to.throw(/not been claimed/);
+
       // Silence: the timer runs out and a keeper bot opens the claim.
       h.warp(30 * DAY);
       expectSuccess(await h.triggerClaim(capsule));
 
       // Two of the three guardians vouch; nobody vetoes during the grace period.
-      expectSuccess(await h.guardianConfirm(capsule, capsule.guardians[0]));
-      expectSuccess(await h.guardianConfirm(capsule, capsule.guardians[2]));
+      expectSuccess(await h.guardianConfirm(capsule, guardians[0]));
+      expectSuccess(await h.guardianConfirm(capsule, guardians[2]));
+      expect(() => kit.releaseShare(heirKit, eagerShare, chainState())).to.throw(/not been claimed/);
       h.warp(7 * DAY);
       expectSuccess(await h.claim(capsule));
       expect(statusOf(h.capsule(capsule.address))).to.equal("claimed");
 
-      // Off-chain: the heir checks both shares against the on-chain hashes and recovers the seed.
-      const committed = h.capsule(capsule.address).shareHashes.map((hash) => bytesToHex(Uint8Array.from(hash)));
-      const received = [shares[1], shares[2]];
-      for (const share of received) expect(committed).to.include(bytesToHex(sha256(share)));
+      // Seeing `Claimed` on-chain, guardians #1 and #3 open their shares and re-seal them to the
+      // inbox key certified by the on-chain heir.
+      const releases = [0, 2].map((g) => {
+        const guardianKit = kit.decodeKit(portableKit);
+        const inbox = guardianInboxes[g].keyPair;
+        const share = kit.openShare(guardianKit, kit.findShareIndex(guardianKit, inbox.publicKey), inbox.secretKey);
+        return kit.releaseShare(guardianKit, share, chainState());
+      });
 
-      const tampered = Uint8Array.from(shares[2]);
-      tampered[tampered.length - 1] ^= 0x01;
-      expect(committed).to.not.include(bytesToHex(sha256(tampered)));
-
-      expect(new TextDecoder().decode(await combine(received))).to.equal(seedPhrase);
+      // The heir authenticates both releases against the committed hashes and recovers the seed.
+      const released = releases.map((release) => kit.openRelease(heirKit, release, heirInbox.keyPair.secretKey));
+      const recovered = await kit.recoverSecret(heirKit, [heirShare, ...released]);
+      expect(new TextDecoder().decode(recovered)).to.equal(seedPhrase);
     });
   });
 });

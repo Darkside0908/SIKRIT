@@ -35,7 +35,7 @@ SIKRIT adalah protokol warisan digital pertama di mana **liveness si pemilik tid
 - [x] Anchor program + security review (anti-replay, guardian N-of-M, veto terbatas, PDA tanpa identitas)
 - [x] Schnorr PoK: verifier on-chain via syscall curve25519 + prover TypeScript (`sdk/liveness.ts`)
 - [x] Test suite lifecycle lengkap (35 test LiteSVM + 10 unit test Rust)
-- [ ] Enkripsi share (ECIES) + distribusi share via guardian (lihat SIK-11 di security review)
+- [x] SDK kriptografi client: HPKE RFC 9180 (X25519 + ChaCha20-Poly1305), Shamir GF(2^8) teraudit, capsule kit dengan inbox certificate + release share oleh guardian setelah `Claimed` (23 test, known-answer vector RFC 9180 & FIPS-197)
 - [ ] Frontend (setup → heartbeat → claim)
 - [ ] Deploy devnet + E2E
 - [ ] Pitch deck + video
@@ -51,7 +51,11 @@ SIKRIT adalah protokol warisan digital pertama di mana **liveness si pemilik tid
 ```
 programs/sikrit/src/lib.rs   Program Anchor (state machine + verifier Schnorr + unit test Rust)
 sdk/liveness.ts              Prover ZK proof-of-liveness (dipakai test & frontend)
+sdk/hpke.ts                  HPKE RFC 9180 base mode (enkripsi share ke kunci inbox X25519)
+sdk/shamir.ts                Shamir's Secret Sharing GF(2^8) (wrapper library teraudit Cure53 + Zellic)
+sdk/kit.ts                   Capsule kit: enkripsi rahasia, split kunci, seal share ke heir/guardian, release, recovery
 tests/sikrit.ts              Test lifecycle kapsul di LiteSVM (time-travel clock)
+tests/sdk.ts                 Test SDK: known-answer vector RFC 9180 & FIPS-197, serangan pada kit
 docs/                        Pitch, spesifikasi teknis, security review
 ```
 
@@ -72,7 +76,7 @@ npm install
 
 npm run build         # anchor build (CLI 0.30.2 dari devDependency)
 npm run test:rust     # unit test verifier Schnorr (host)
-npm test              # lifecycle test di LiteSVM
+npm test              # lifecycle test di LiteSVM + test SDK
 npm run typecheck
 ```
 

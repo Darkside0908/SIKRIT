@@ -90,6 +90,26 @@ export function deriveLivenessSecret(walletSignature: Uint8Array): bigint {
   return x;
 }
 
+/**
+ * Owner setup with any wallet that exposes `signMessage` (wallet adapters do). Signs
+ * `KEYGEN_MESSAGE` twice and refuses wallets whose signatures are not deterministic (some
+ * MPC/threshold wallets): with those the owner could never re-derive x, stop proving liveness,
+ * and the capsule would open while they are still alive. Later sessions sign once and compare
+ * `commitmentFromSecret(x)` with the capsule's commitment.
+ */
+export async function deriveLivenessSecretFromWallet(
+  wallet: Uint8Array,
+  signMessage: (message: Uint8Array) => Promise<Uint8Array>,
+): Promise<bigint> {
+  const first = await signMessage(KEYGEN_MESSAGE);
+  const second = await signMessage(KEYGEN_MESSAGE);
+  if (!ed25519.verify(first, KEYGEN_MESSAGE, wallet)) throw new Error("liveness: signature does not match the wallet");
+  if (first.length !== second.length || first.some((byte, i) => byte !== second[i])) {
+    throw new Error("liveness: this wallet does not sign deterministically, so the liveness key could not be re-derived");
+  }
+  return deriveLivenessSecret(first);
+}
+
 /** Public commitment P = x·G (32-byte compressed Edwards point). */
 export function commitmentFromSecret(x: bigint): Uint8Array {
   return Point.BASE.multiply(x).toBytes();

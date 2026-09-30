@@ -1,8 +1,8 @@
 # SIKRIT — Security & Code Review (`programs/sikrit`)
 
-> **Scope:** `programs/sikrit/src/lib.rs` versi awal (draft v0.1), konfigurasi build (`Anchor.toml`, `Cargo.toml`), dan desain kriptografi Schnorr proof-of-liveness.
+> **Scope:** `programs/sikrit/src/lib.rs` versi awal (draft v0.1), konfigurasi build (`Anchor.toml`, `Cargo.toml`), desain kriptografi Schnorr proof-of-liveness, dan (sejak 30 Sep malam) protokol custody share di SDK client (`sdk/hpke.ts`, `sdk/shamir.ts`, `sdk/kit.ts`) — lihat §5.
 > **Tanggal:** 30 September 2026 · **Metode:** review manual (kriptografi + keamanan smart contract), kompilasi SBF nyata, 10 unit test Rust, 35 test integrasi TypeScript di LiteSVM dengan time-travel, dan benchmark compute unit.
-> **Hasil:** 11 temuan — 3 Critical, 3 High, 2 Medium, 2 Low, 1 Info (desain). Sepuluh sudah diperbaiki di kode, satu tercatat sebagai pekerjaan desain M2.
+> **Hasil:** 15 temuan — 3 Critical, 4 High, 3 Medium, 4 Low, 1 Info (desain). Empat belas sudah diperbaiki di kode; SIK-11 dimitigasi di client (urutan release tetap janji guardian, bukan paksaan kriptografis).
 
 ---
 
@@ -20,7 +20,11 @@
 | SIK-08 | 🟡 Medium | Validasi guardian: duplikat, ahli waris sebagai guardian, pubkey default | ✅ Fixed |
 | SIK-09 | 🔵 Low | Kalkulasi `space` manual (rawan salah saat struct berubah) | ✅ Fixed |
 | SIK-10 | 🔵 Low | Konfigurasi build/test rusak (workspace, `idl-build`, script test rekursif, program ID placeholder) | ✅ Fixed |
-| SIK-11 | ⚪ Info (desain) | `claim` hanya flag status — pelepasan rahasia belum dipaksakan secara kriptografis | ⏳ Open (M2) |
+| SIK-11 | ⚪ Info (desain) | `claim` hanya flag status — pelepasan rahasia belum dipaksakan secara kriptografis | 🟡 Mitigated (client, §5) |
+| SIK-12 | 🟠 High (desain) | Kunci enkripsi ahli waris/guardian tanpa autentikasi → share bisa disegel/di-release ke kunci penyerang | ✅ Fixed (§5) |
+| SIK-13 | 🟡 Medium | Shamir `combine` diam-diam menghasilkan rahasia salah untuk share palsu/kurang | ✅ Fixed (§5) |
+| SIK-14 | 🔵 Low | Seed phrase di-split langsung (secret tidak uniform, panjang share membocorkan panjang rahasia) | ✅ Fixed (§5) |
+| SIK-15 | 🔵 Low | Derivasi kunci dari tanda tangan wallet mengasumsikan tanda tangan deterministik tanpa dicek | ✅ Fixed (§5) |
 
 Nomor baris di bawah merujuk ke **draft awal** `lib.rs`.
 
@@ -124,7 +128,9 @@ domain  = "SIKRIT:liveness:v1"            context = heartbeat_nonce (u64 LE)
 
 `claim` hanya mengubah status menjadi `Claimed`. Keamanan inti ("ahli waris **tidak boleh** bisa membuka selama pemilik hidup") sepenuhnya bergantung pada distribusi share off-chain. Jika ahli waris memegang ≥ k share sejak awal (mis. Share B dan Share C sama-sama dienkripsi ke pubkey ahli waris seperti tersirat di spec §3.1), ahli waris bisa merekonstruksi rahasia **kapan saja** dan dead man's switch tidak berarti.
 
-**Rekomendasi (M2):** ahli waris hanya memegang < k share. Share sisanya dienkripsi ke masing-masing guardian, dan guardian menyerahkannya (re-encrypt ke ahli waris) **hanya setelah** status on-chain `Claimed`. Dengan begitu kepercayaan yang tersisa eksplisit: "≥ threshold guardian tidak berkolusi dengan ahli waris sebelum pemilik wafat". `share_hashes` on-chain dipakai ahli waris untuk memverifikasi integritas share yang diterima (sudah didemonstrasikan di test end-to-end). Alternatif lanjutan: jaringan threshold (mis. Lit Protocol) yang membaca status program.
+**Status (30 Sep):** dimitigasi di client lewat protokol custody §5 — ahli waris hanya memegang 1 share (< k), guardian me-release share mereka hanya setelah `Claimed` dan hanya ke kunci inbox yang disertifikasi wallet `heir` on-chain. Yang tetap berupa asumsi kepercayaan: kuorum guardian tidak berkolusi dengan ahli waris sebelum pemilik wafat.
+
+**Rekomendasi awal (M2):** ahli waris hanya memegang < k share. Share sisanya dienkripsi ke masing-masing guardian, dan guardian menyerahkannya (re-encrypt ke ahli waris) **hanya setelah** status on-chain `Claimed`. Dengan begitu kepercayaan yang tersisa eksplisit: "≥ threshold guardian tidak berkolusi dengan ahli waris sebelum pemilik wafat". `share_hashes` on-chain dipakai ahli waris untuk memverifikasi integritas share yang diterima (sudah didemonstrasikan di test end-to-end). Alternatif lanjutan: jaringan threshold (mis. Lit Protocol) yang membaca status program.
 
 ---
 
@@ -184,7 +190,12 @@ Semua di bawah budget default 200.000 CU per instruksi → tidak perlu instruksi
 | R6 | Toolchain legacy | Anchor 0.30.x menghasilkan SBPF v0. Agave 4.3 sudah memuat feature gate SIMD-0500 (menonaktifkan deploy SBPF v0–v2) yang **belum aktif** di devnet/mainnet per 30 Sep 2026. Setelah hackathon, migrasi ke Anchor 1.x (SBPF v3). |
 | R7 | Rent tidak bisa ditarik kembali | Tidak ada instruksi `close`; rent ~0,005 SOL per kapsul terkunci. Tambahkan `close` pasca-`Claimed` jika diperlukan. |
 | R8 | Pemilik tidak sadar ada trigger | Pemilik perlu notifikasi off-chain (watcher event `ClaimTriggered`) agar sempat heartbeat selama grace period. |
-| R9 | Phishing tanda tangan kunci liveness | `deriveLivenessSecret()` (SDK) menurunkan `x` dari tanda tangan wallet atas `KEYGEN_MESSAGE`. Situs phishing yang mendapat tanda tangan yang sama bisa memalsukan heartbeat (menahan pewarisan), walau tidak bisa membuka rahasia. Mitigasi: ikat origin/domain aplikasi ke pesan (gaya Sign-In With Solana) atau pakai `generateLivenessSecret()` acak yang disimpan terenkripsi. |
+| R9 | Phishing tanda tangan kunci liveness / inbox | `deriveLivenessSecret()` (SDK) menurunkan `x` dari tanda tangan wallet atas `KEYGEN_MESSAGE`. Situs phishing yang mendapat tanda tangan yang sama bisa memalsukan heartbeat (menahan pewarisan), walau tidak bisa membuka rahasia. Mitigasi: ikat origin/domain aplikasi ke pesan (gaya Sign-In With Solana) atau pakai `generateLivenessSecret()` acak yang disimpan terenkripsi. Hal yang sama berlaku untuk `INBOX_MESSAGE`: tanda tangan yang dicuri membuka share milik pemegang itu saja (< k). |
+| R10 | Bukan post-quantum | X25519 (HPKE) dan Ed25519 tidak tahan komputer kuantum. Kit sengaja tidak ditaruh di storage publik permanen (hanya hash yang on-chain) sehingga tidak bisa di-*harvest now, decrypt later* secara massal. Roadmap: KEM hibrida X-Wing (ML-KEM-768 + X25519) begitu HPKE-nya terstandar; format kit sudah berversi. |
+| R11 | Side channel JavaScript | JS (JIT + GC) tidak menjamin constant-time; aritmetika GF(2^8) library Shamir memakai tabel lookup. Operasi dilakukan sekali di device pengguna; penyerang lokal yang bisa mengukur cache di device itu di luar model ancaman. |
+| R12 | Kompatibilitas wallet | Derivasi kunci butuh `signMessage` dengan tanda tangan Ed25519 deterministik atas byte mentah. Wallet MPC dengan tanda tangan acak ditolak saat setup (SIK-15); Ledger yang hanya menandatangani format *off-chain message* Solana perlu dukungan terpisah. |
+| R13 | Ahli waris kehilangan wallet | Share ahli waris tidak bisa dibuka lagi. Jalan pemulihan: kuorum guardian yang cukup untuk k (mis. 3 guardian untuk k = 3) me-release ke kunci inbox baru, asalkan wallet `heir` on-chain masih bisa menandatangani sertifikat baru. |
+| R14 | Advisory npm transitif | `npm audit --omit=dev`: `toml` (via `@anchor-lang/core`) dan `uuid` (via `@solana/web3.js`). Jalur kodenya (parsing TOML workspace Anchor, `uuid` v3/v5 dengan buffer) tidak dipakai SDK/frontend; dicek ulang saat audit akhir (F6). |
 
 ### Catatan kejujuran klaim (PITCH.md)
 
@@ -194,12 +205,56 @@ Semua di bawah budget default 200.000 CU per instruksi → tidak perlu instruksi
 
 ---
 
-## 5. Cara Mereproduksi
+## 5. Protokol Custody Share di Client (SDK, M2)
+
+Spesifikasi lengkap: `docs/TECHNICAL-SPEC.md` §3. Ringkasan konstruksi:
+
+```
+dek ← acak 32 B;  payload = XChaCha20-Poly1305(dek, nonce, aad = "SIKRIT:payload:v1" ‖ P ‖ k ‖ n)(rahasia)
+share_i  = Shamir k-of-n (dek)                     sealed_i = HPKE(X25519, HKDF-SHA256, ChaCha20-Poly1305)
+hash_i   = SHA-256("SIKRIT:share-hash:v1" ‖ P ‖ share_i)  → share_hashes on-chain (ikut ditandatangani PoP)
+share_0 → ahli waris, share_{1+g} → guardian g, k − 1 = kuorum guardian
+```
+
+### SIK-12 🟠 Kunci enkripsi tanpa autentikasi (CWE-322: Key Exchange without Entity Authentication)
+
+**Masalah:** spec awal hanya menyebut "enkripsi share ke pubkey heir" tanpa menjelaskan dari mana pemilik mendapatkan kunci enkripsi ahli waris/guardian. Kunci enkripsi (X25519) bukan kunci wallet, jadi harus dikirim lewat kanal off-chain. Penyerang yang menukar kunci di kanal itu (atau di file kit) menerima share: saat setup (pemilik menyegel ke kunci penyerang) maupun saat release (guardian me-re-seal ke "ahli waris" palsu). Dengan mengganti kunci semua pemegang, penyerang mendapat ≥ k share.
+**Perbaikan:** *inbox certificate* — tanda tangan wallet pemegang atas `"SIKRIT inbox certificate v1: <hex inbox>"`. `sealCapsuleKit` menolak sertifikat tidak valid serta wallet/inbox ganda; `verifyKit` mencocokkan wallet pemegang dengan `heir`/`guardians` on-chain secara berurutan; `releaseShare` hanya menyegel ke inbox yang disertifikasi wallet `heir` on-chain, hanya jika kapsul `Claimed`, dan hanya untuk share guardian.
+**Test:** `carries inbox keys in wallet-signed invites; a swapped key or wallet is rejected`, `guardians release only after the claim, only to the on-chain heir, and only their own share`, `verifies a kit against the capsule's commitment, share hashes, heir and guardians on-chain`, `refuses unsafe parameters`.
+
+### SIK-13 🟡 Rekonstruksi Shamir tanpa integritas (CWE-354)
+
+**Masalah:** `combine` dari library Shamir tidak bisa membedakan share benar dan salah (disebutkan di README library). Guardian jahat yang mengirim share palsu, atau ahli waris yang menggabungkan share kurang dari k, mendapat rahasia yang salah tanpa error — dan tidak tahu share mana yang buruk.
+**Perbaikan:** setiap share diautentikasi terhadap `share_hashes` on-chain sebelum digabung (share asing ditolak dengan pesan eksplisit), jumlah share distinct dicek terhadap k, dan tag AEAD payload mengautentikasi DEK hasil rekonstruksi (threshold yang dimanipulasi → gagal tertutup).
+**Test:** `rejects a forged or foreign share by name instead of reconstructing garbage`, `authenticates the payload: a tampered threshold or ciphertext fails closed`.
+
+### SIK-14 🔵 Rahasia tidak uniform di-split langsung
+
+**Masalah:** test E2E dan spec §3.1 lama men-split seed phrase (UTF-8) langsung. Library merekomendasikan rahasia uniform ("encrypt the value and split the encryption key"); panjang share juga membocorkan panjang rahasia (12 vs 24 kata).
+**Perbaikan:** hybrid — yang di-split selalu DEK 32 byte acak (share 33 byte tetap), rahasia dienkripsi XChaCha20-Poly1305 dengan AAD yang mengikat `P`, k, n.
+
+### SIK-15 🔵 Asumsi tanda tangan deterministik
+
+**Masalah:** `deriveLivenessSecret` dan kunci inbox diturunkan dari tanda tangan wallet. Wallet dengan tanda tangan acak (sebagian wallet MPC/threshold) menghasilkan kunci berbeda di setiap sesi: pemilik tidak bisa heartbeat lagi (kapsul terbuka saat ia masih hidup), ahli waris tidak bisa membuka share-nya.
+**Perbaikan:** `deriveLivenessSecretFromWallet` dan `createInbox` menandatangani dua kali, memverifikasi tanda tangan terhadap wallet, dan menolak jika berbeda.
+**Test:** `derives the owner's liveness key only from a deterministic signature by the owner's wallet`, `onboards only wallets that sign deterministically, and only for the wallet that signed`.
+
+### Known-answer vectors
+
+| Komponen | Referensi eksternal |
+|---|---|
+| HPKE (`sdk/hpke.ts`) | RFC 9180 Appendix A.2.1: key pair, key schedule, 6 enkripsi (seq 0–256), 3 exported value |
+| GF(2^8) Shamir (`sdk/shamir.ts`) | Referensi tanpa tabel, dijangkar contoh FIPS-197 §4.2 (`{57}·{83} = {c1}`); vektor 3-of-5 ter-pin |
+| Inbox key & share hash (`sdk/kit.ts`) | Dihitung ulang secara independen dengan Python `hashlib`/`hmac` + pyca `cryptography` |
+
+---
+
+## 6. Cara Mereproduksi
 
 ```bash
 npm run build                # anchor build: SBF + IDL (Solana 1.18.17, Anchor CLI 0.30.2)
 npm run test:rust            # 10 unit test verifier Schnorr + validasi config
-npm test                     # 35 test lifecycle di LiteSVM (Node 24 LTS)
+npm test                     # 35 test lifecycle di LiteSVM + 24 test SDK (Node 24 LTS)
 npm run typecheck
 ```
 
