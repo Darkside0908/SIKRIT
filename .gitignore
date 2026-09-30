@@ -9,3 +9,6 @@ id.json
 loop/logs/
 .next/
 dist/
+# Secret keys: program-ID keypair (target/deploy/sikrit-keypair.json) & any backups
+*keypair*.json
+.keys/
