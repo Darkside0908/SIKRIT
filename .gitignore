@@ -14,3 +14,7 @@ dist/
 .keys/
 # E2E run artifacts (curated screenshots live in docs/screenshots/)
 app/e2e/out/
+
+# Internal: autonomous loop + private prompts (not part of the public repo)
+loop/
+prompt-claude-code.txt
