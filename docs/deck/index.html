@@ -1,0 +1,536 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SIKRIT — pitch deck</title>
+<!--
+  SIKRIT pitch deck: 10 slides at 1920×1080.
+  View: open this file in a browser (← → or click to step; F = full screen, one slide at a time).
+  PDF:  cd app && npm run deck   → docs/deck/SIKRIT-deck.pdf
+  Fonts are OFL (see fonts/LICENSES.txt); screenshots come from the E2E run (docs/screenshots).
+-->
+<style>
+  @font-face { font-family: "Gloock"; src: url("fonts/gloock-latin-400-normal.woff2") format("woff2"); font-weight: 400; }
+  @font-face { font-family: "Schibsted Grotesk"; src: url("fonts/schibsted-grotesk-latin-400-normal.woff2") format("woff2"); font-weight: 400; }
+  @font-face { font-family: "Schibsted Grotesk"; src: url("fonts/schibsted-grotesk-latin-500-normal.woff2") format("woff2"); font-weight: 500; }
+  @font-face { font-family: "Schibsted Grotesk"; src: url("fonts/schibsted-grotesk-latin-600-normal.woff2") format("woff2"); font-weight: 600; }
+  @font-face { font-family: "Schibsted Grotesk"; src: url("fonts/schibsted-grotesk-latin-700-normal.woff2") format("woff2"); font-weight: 700; }
+  @font-face { font-family: "Fragment Mono"; src: url("fonts/fragment-mono-latin-400-normal.woff2") format("woff2"); font-weight: 400; }
+
+  :root {
+    --ink-950: #0f0d0b; --ink-900: #15120f; --ink-850: #1b1814; --ink-800: #221e19; --ink-700: #332d25; --ink-600: #4a4236;
+    --bone-50: #f6f0e4; --bone-100: #ece3d2; --bone-200: #d8ccb6; --bone-300: #bcae96; --bone-400: #a3957e; --bone-500: #827662;
+    --seal-300: #f08a6f; --seal-400: #e5603f; --seal-500: #cf4429; --seal-600: #a9321c;
+    --life-300: #a9d8c2; --life-400: #7fbca2; --life-500: #5c9c83; --life-800: #1f3a30;
+    --amber: #e3ae52;
+    --display: "Gloock", "Iowan Old Style", Georgia, serif;
+    --sans: "Schibsted Grotesk", ui-sans-serif, system-ui, sans-serif;
+    --mono: "Fragment Mono", ui-monospace, monospace;
+    --scale: 1;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { background: #070605; }
+  body { font-family: var(--sans); color: var(--bone-100); -webkit-font-smoothing: antialiased; }
+
+  /* ---------- deck chrome (screen only) ---------- */
+  .deck { display: flex; flex-direction: column; align-items: center; gap: calc(36px * var(--scale)); padding: calc(40px * var(--scale)) 0; }
+  .frame { width: calc(1920px * var(--scale)); height: calc(1080px * var(--scale)); position: relative; }
+  .frame > .slide { transform: scale(var(--scale)); transform-origin: top left; position: absolute; top: 0; left: 0; }
+  body.present { overflow: hidden; }
+  body.present .deck { padding: 0; gap: 0; height: 100vh; justify-content: center; }
+  body.present .frame { display: none; }
+  body.present .frame.current { display: block; }
+  .hint { position: fixed; right: 18px; bottom: 14px; font: 12px var(--mono); color: var(--bone-500); opacity: .7; }
+  body.present .hint { display: none; }
+
+  /* ---------- slide ---------- */
+  .slide {
+    width: 1920px; height: 1080px; overflow: hidden; position: relative;
+    padding: 152px 128px 150px;
+    background:
+      radial-gradient(1300px 760px at 8% -12%, rgb(207 68 41 / .11), transparent 60%),
+      radial-gradient(1000px 700px at 112% 18%, rgb(92 156 131 / .08), transparent 55%),
+      radial-gradient(1500px 900px at 50% 125%, rgb(0 0 0 / .7), transparent 70%),
+      var(--ink-950);
+  }
+  .slide.ledger::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background-image: repeating-linear-gradient(to bottom, transparent 0, transparent 47px, rgb(236 227 210 / .03) 47px, rgb(236 227 210 / .03) 48px);
+  }
+  .slide > * { position: relative; z-index: 1; }
+
+  .masthead { position: absolute; top: 44px; left: 128px; right: 128px; display: flex; align-items: center; justify-content: space-between; z-index: 2; }
+  .brand { display: flex; align-items: center; gap: 14px; font-family: var(--display); font-size: 30px; color: var(--bone-50); letter-spacing: .02em; }
+  .brand small { display: block; font: 600 11px var(--sans); letter-spacing: .24em; color: var(--bone-500); text-transform: uppercase; margin-top: 2px; }
+  .folio { font: 18px var(--mono); color: var(--bone-500); letter-spacing: .04em; }
+  .folio b { color: var(--bone-300); font-weight: 400; }
+
+  .vitals { position: absolute; left: 0; right: 0; bottom: 34px; height: 92px; z-index: 0; }
+  .vitals svg { width: 100%; height: 100%; display: block; }
+  .vitals-caption { position: absolute; left: 128px; bottom: 26px; font: 16px var(--mono); color: var(--bone-500); z-index: 2; }
+  .vitals-caption .ok { color: var(--life-300); }
+  .vitals-caption .bad { color: var(--seal-300); }
+  .source { position: absolute; right: 128px; bottom: 26px; font: 15px var(--mono); color: var(--bone-500); z-index: 2; text-align: right; max-width: 1100px; }
+
+  .eyebrow { font: 600 19px var(--sans); letter-spacing: .26em; text-transform: uppercase; color: var(--bone-400); }
+  .eyebrow .num { color: var(--seal-400); margin-right: 14px; font-family: var(--display); letter-spacing: .04em; font-size: 24px; }
+  h1, h2 { font-family: var(--display); font-weight: 400; color: var(--bone-50); letter-spacing: -.005em; }
+  h1 { font-size: 150px; line-height: .93; }
+  h2 { font-size: 86px; line-height: 1.02; margin-top: 20px; }
+  em { font-style: italic; color: var(--seal-400); }
+  .lede { font-size: 36px; line-height: 1.42; color: var(--bone-300); max-width: 1180px; }
+  .lede strong { color: var(--bone-50); font-weight: 500; }
+  p { font-size: 28px; line-height: 1.5; color: var(--bone-300); }
+  .mono { font-family: var(--mono); letter-spacing: -.01em; }
+
+  .card {
+    background: rgb(21 18 15 / .88); border: 1px solid var(--ink-700); border-radius: 22px;
+    box-shadow: inset 0 1px 0 rgb(246 240 228 / .04), 0 40px 90px -40px rgb(0 0 0 / .95);
+  }
+  .shot { border-radius: 18px; border: 1px solid var(--ink-700); box-shadow: 0 50px 110px -45px rgb(0 0 0 / .95); display: block; }
+
+  .redact { display: inline-block; height: .95em; background: #000; border-radius: 3px; vertical-align: middle; box-shadow: inset 0 0 0 1px rgb(255 255 255 / .05); }
+  .stamp {
+    display: inline-block; border: 4px solid currentColor; border-radius: 6px; padding: 10px 22px;
+    font: 700 26px var(--sans); letter-spacing: .22em; text-transform: uppercase; transform: rotate(-8deg);
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='80'><filter id='r'><feTurbulence baseFrequency='0.7' numOctaves='2'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -2.2 1.7'/></filter><rect width='100%' height='100%' filter='url(%23r)'/></svg>");
+            mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='80'><filter id='r'><feTurbulence baseFrequency='0.7' numOctaves='2'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -2.2 1.7'/></filter><rect width='100%' height='100%' filter='url(%23r)'/></svg>");
+  }
+  .chip { display: inline-flex; align-items: center; gap: 10px; border: 1.5px solid; border-radius: 999px; padding: 6px 18px; font: 600 18px var(--sans); letter-spacing: .04em; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+  /* ---------- 1 · title ---------- */
+  .slide.title { padding-top: 120px; }
+  .title-grid { display: grid; grid-template-columns: 1.18fr 1fr; gap: 90px; align-items: center; height: 100%; }
+  .title-grid h1 { font-size: 132px; }
+  .title-grid .lede { font-size: 32px; }
+  .testament { padding: 46px 50px 30px; transform: rotate(1.6deg); }
+  .testament dl { display: grid; grid-template-columns: auto 1fr; gap: 0; margin-top: 30px; }
+  .testament dt, .testament dd { padding: 17px 0; border-bottom: 1px solid rgb(51 45 37 / .7); font-size: 25px; }
+  .testament dt { color: var(--bone-500); }
+  .testament dd { text-align: right; color: var(--bone-200); }
+  .seal-big { position: absolute; right: 30px; bottom: -150px; transform: rotate(14deg); filter: drop-shadow(0 20px 26px rgb(0 0 0 / .65)); }
+  .byline { margin-top: 44px; display: flex; flex-direction: column; gap: 8px; font-size: 24px; color: var(--bone-400); }
+  .byline b { color: var(--bone-100); font-weight: 600; }
+
+  /* ---------- 2 · problem ---------- */
+  .figures { display: grid; grid-template-columns: 1fr 1fr; gap: 80px; margin-top: 70px; }
+  .figure { border-left: 2px solid var(--ink-600); padding-left: 40px; }
+  .figure .big { font-family: var(--display); font-size: 150px; line-height: .95; color: var(--bone-50); white-space: nowrap; }
+  .figure .big small { font-size: 72px; color: var(--bone-300); }
+  .figure p { margin-top: 18px; max-width: 700px; }
+  .tension { margin-top: 78px; font-family: var(--display); font-size: 50px; line-height: 1.22; color: var(--bone-100); max-width: 1500px; }
+  .tension em { color: var(--seal-400); }
+
+  /* ---------- 3 · insight ---------- */
+  .versus { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 44px; margin-top: 50px; }
+  .versus .card { padding: 34px 38px; min-width: 0; }
+  .versus h3 { font: 600 24px var(--sans); color: var(--bone-400); margin-bottom: 24px; }
+  .versus pre.code { font-size: 22px; padding: 24px 26px; }
+  .versus .good h3 { color: var(--life-300); }
+  .versus .good { border-color: rgb(92 156 131 / .4); }
+  pre.code { font: 24px/1.62 var(--mono); overflow: hidden; color: var(--bone-200); background: rgb(15 13 11 / .7); border: 1px solid var(--ink-700); border-radius: 14px; padding: 26px 30px; white-space: pre; }
+  pre.code .dim { color: var(--bone-500); }
+  pre.code .bad { color: var(--seal-300); }
+  pre.code .ok { color: var(--life-300); }
+  .verdict { margin-top: 44px; font-size: 30px; line-height: 1.45; color: var(--bone-200); max-width: 1600px; }
+  .verdict strong { color: var(--bone-50); font-weight: 600; }
+
+  /* ---------- 4 · how ---------- */
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 44px; margin-top: 64px; }
+  .step { padding: 46px 44px 40px; }
+  .step .numeral { font-family: var(--display); font-size: 92px; line-height: 1; color: rgb(229 96 63 / .85); }
+  .step h3 { font-family: var(--display); font-weight: 400; font-size: 52px; color: var(--bone-50); margin: 18px 0 20px; }
+  .step p { font-size: 26px; line-height: 1.5; }
+  .step .detail { margin-top: 26px; font: 21px var(--mono); color: var(--life-300); }
+
+  /* ---------- 5 · proof ---------- */
+  .proof { display: grid; grid-template-columns: 1.8fr 1fr; gap: 56px; margin-top: 46px; align-items: start; }
+  .proof .shot { width: 100%; }
+  .stats { display: flex; flex-direction: column; gap: 30px; }
+  .stat .big { font-family: var(--display); font-size: 92px; line-height: .95; color: var(--bone-50); }
+  .stat .big.life { color: var(--life-300); }
+  .stat p { font-size: 23px; margin-top: 8px; }
+
+  /* ---------- 6 · product ---------- */
+  .gallery { display: grid; grid-template-columns: 640px minmax(0, 1fr); grid-template-rows: auto auto; gap: 30px 48px; margin-top: 40px; }
+  .gallery img { width: 100%; object-fit: cover; object-position: top; }
+  .gallery .tall img { height: 560px; }
+  .gallery .wide img { height: 224px; }
+  .gallery .crop img { height: 236px; }
+  .gallery figcaption { margin-top: 12px; font-size: 21px; color: var(--bone-400); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .gallery figcaption b { color: var(--bone-100); font-weight: 600; }
+  .gallery .tall { grid-row: span 2; }
+
+  /* ---------- 7 · under the hood ---------- */
+  .hood { display: grid; grid-template-columns: 1.08fr 1fr; gap: 70px; margin-top: 54px; }
+  .transcript { padding: 40px 44px; }
+  .transcript pre.code { font-size: 24px; }
+  .transcript .note { margin-top: 26px; font-size: 24px; line-height: 1.5; }
+  ul.facts { list-style: none; display: flex; flex-direction: column; gap: 22px; }
+  ul.facts li { font-size: 27px; line-height: 1.4; color: var(--bone-200); padding-left: 44px; position: relative; }
+  ul.facts li::before { content: "✓"; position: absolute; left: 0; top: 0; color: var(--life-400); font-weight: 700; }
+  ul.facts li span { color: var(--bone-400); }
+  .limits { margin-top: 44px; border: 1px dashed var(--ink-600); border-radius: 16px; padding: 24px 32px; font-size: 23px; line-height: 1.5; color: var(--bone-400); }
+  .limits b { color: var(--amber); font-weight: 600; letter-spacing: .14em; text-transform: uppercase; font-size: 17px; margin-right: 12px; }
+
+  /* ---------- 8 · landscape ---------- */
+  table.land { width: 100%; border-collapse: collapse; margin-top: 46px; font-size: 25px; }
+  table.land th { text-align: left; font: 600 17px var(--sans); letter-spacing: .2em; text-transform: uppercase; color: var(--bone-500); padding: 0 24px 16px 0; border-bottom: 1px solid var(--ink-700); }
+  table.land td { padding: 15px 24px 15px 0; border-bottom: 1px solid rgb(51 45 37 / .6); color: var(--bone-300); vertical-align: top; }
+  table.land td:first-child { color: var(--bone-100); font-weight: 600; white-space: nowrap; }
+  table.land td.chain { font-family: var(--mono); font-size: 22px; color: var(--bone-400); white-space: nowrap; }
+  table.land .yes { color: var(--seal-300); font-weight: 600; }
+  table.land .meh { color: var(--amber); font-weight: 600; }
+  table.land tr.us td { border-bottom: none; background: rgb(31 58 48 / .45); }
+  table.land tr.us td:first-child { padding-left: 22px; border-radius: 14px 0 0 14px; color: var(--bone-50); }
+  table.land tr.us td:last-child { border-radius: 0 14px 14px 0; }
+  table.land tr.us .no { color: var(--life-300); font-weight: 700; }
+
+  /* ---------- 9 · business ---------- */
+  .revenue { display: grid; grid-template-columns: repeat(4, 1fr); gap: 32px; margin-top: 56px; }
+  .revenue .card { padding: 36px 34px; }
+  .revenue .k { font: 600 17px var(--sans); letter-spacing: .2em; text-transform: uppercase; color: var(--seal-300); }
+  .revenue h3 { font-family: var(--display); font-weight: 400; font-size: 40px; line-height: 1.08; color: var(--bone-50); margin: 16px 0 16px; }
+  .revenue p { font-size: 23px; line-height: 1.45; }
+  .gtm { display: grid; grid-template-columns: 1.25fr 1fr; gap: 64px; margin-top: 50px; align-items: start; }
+  .gtm .path { font-family: var(--display); font-size: 44px; line-height: 1.25; color: var(--bone-100); }
+  .gtm .path span { color: var(--seal-400); }
+  .gtm .econ { font-size: 25px; line-height: 1.5; color: var(--bone-300); border-left: 2px solid var(--ink-600); padding-left: 34px; }
+  .gtm .econ b { color: var(--bone-50); font-weight: 600; }
+
+  /* ---------- 10 · team & close ---------- */
+  .close { display: grid; grid-template-columns: 1fr 1.1fr; gap: 80px; margin-top: 56px; align-items: start; }
+  .founder { padding: 42px 46px; display: grid; grid-template-columns: auto 1fr; gap: 34px; align-items: center; }
+  .founder h3 { font-family: var(--display); font-weight: 400; font-size: 46px; color: var(--bone-50); }
+  .founder p { font-size: 24px; margin-top: 10px; }
+  .roadmap { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
+  .roadmap h4 { font: 600 18px var(--sans); letter-spacing: .22em; text-transform: uppercase; color: var(--life-300); margin-bottom: 18px; }
+  .roadmap h4.later { color: var(--amber); }
+  .roadmap li { font-size: 25px; line-height: 1.45; color: var(--bone-300); margin: 0 0 12px 26px; }
+  .finale { margin-top: 44px; display: flex; align-items: flex-end; justify-content: space-between; gap: 40px; }
+  .finale .line { font-family: var(--display); font-size: 84px; line-height: 1; color: var(--bone-50); }
+  .finale .links { font: 24px/1.7 var(--mono); color: var(--bone-300); text-align: right; }
+  .finale .links span { color: var(--bone-500); }
+
+  /* ---------- print / PDF ---------- */
+  @page { size: 1920px 1080px; margin: 0; }
+  @media print {
+    html, body { background: var(--ink-950); }
+    .deck { display: block; padding: 0; }
+    .frame { width: 1920px; height: 1080px; break-after: page; page-break-after: always; }
+    .frame > .slide { transform: none; }
+    .hint { display: none; }
+    * { animation: none !important; }
+  }
+
+  @keyframes trace { from { stroke-dashoffset: var(--len); } to { stroke-dashoffset: 0; } }
+</style>
+</head>
+<body>
+<main class="deck">
+
+<!-- 1 · TITLE ============================================================ -->
+<section class="slide ledger title" data-vital="alive" data-caption='<span class="ok">heartbeat(R, s) ✓</span> &nbsp;· owner wallet: not in this transaction'>
+  <div class="title-grid">
+    <div>
+      <div class="eyebrow">Solana · zero-knowledge proof of life · Shamir + HPKE</div>
+      <h1 style="margin-top:38px">Don't take your keys <em>to the grave.</em></h1>
+      <p class="lede" style="margin-top:38px">SIKRIT is a dead man's switch where <strong>proving you're alive doesn't reveal who you are</strong>. Your heir inherits your seed phrase only after you fall silent — and only with your guardians' consent.</p>
+      <div class="byline"><span><b>Muhammad Ghani Nurramdhan</b> · Politeknik Siber dan Sandi Negara</span><span class="mono">Colosseum Crypto World's Fair 2026</span></div>
+    </div>
+    <div style="position:relative">
+      <div class="card testament">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span class="eyebrow" style="font-size:17px">Capsule · 9mXq…T2vA</span>
+          <span class="chip" style="color:var(--life-300);border-color:rgb(92 156 131 / .6)"><span class="dot" style="background:var(--life-400)"></span>alive</span>
+        </div>
+        <dl>
+          <dt>Owner</dt><dd><span class="redact" style="width:230px"></span></dd>
+          <dt>Heir</dt><dd class="mono">Fs3k…9hQe</dd>
+          <dt>Guardians</dt><dd>2 of 3 must confirm</dd>
+          <dt>Last proof</dt><dd class="mono" style="color:var(--life-300)">heartbeat(R, s) ✓</dd>
+          <dt style="border:none">Signed by owner</dt><dd style="border:none"><span class="stamp" style="color:var(--life-300);font-size:20px;padding:6px 16px">never</span></dd>
+        </dl>
+      </div>
+      <svg class="seal-big" data-seal="S" width="170" height="170"></svg>
+    </div>
+  </div>
+</section>
+
+<!-- 2 · PROBLEM ========================================================== -->
+<section class="slide" data-vital="flat" data-caption='<span class="bad">no heartbeat · no heir · locked forever</span>'>
+  <div class="eyebrow"><span class="num">I</span>The problem</div>
+  <h2>Self-custody has no next of kin.</h2>
+  <div class="figures">
+    <div class="figure">
+      <div class="big">2.3–3.7<small>M BTC</small></div>
+      <p>estimated <strong style="color:var(--bone-50);font-weight:500">permanently lost</strong> — 11–18% of all bitcoin. Forgotten keys, lost devices, and holders who died without passing on access.</p>
+    </div>
+    <div class="figure">
+      <div class="big">22.93<small>M</small></div>
+      <p>crypto investors in <strong style="color:var(--bone-50);font-weight:500">Indonesia alone</strong> (OJK, July 2026). Most of their families would not know where to begin.</p>
+    </div>
+  </div>
+  <p class="tension">Your family must be able to open your wallet when you're gone — and must <em>never</em> be able to while you're alive.</p>
+  <div class="source">Sources: Chainalysis/Ledger estimates via BitGo (2026) · OJK via Suara.com (30 Sep 2026)</div>
+</section>
+
+<!-- 3 · INSIGHT ========================================================== -->
+<section class="slide" data-vital="alive">
+  <div class="eyebrow"><span class="num">II</span>The insight</div>
+  <h2>Every dead man's switch <em>broadcasts your pulse.</em></h2>
+  <div class="versus">
+    <div class="card">
+      <h3>A typical on-chain check-in</h3>
+<pre class="code">check_in()
+  signer:  <span class="bad">7xKp… owner wallet</span>   <span class="dim">← public</span>
+  vault:   <span class="bad">PDA("vault", 7xKp…)</span>  <span class="dim">← derived from it</span>
+  <span class="dim">→</span> "7xKp… is alive, active, today"</pre>
+    </div>
+    <div class="card good">
+      <h3>A SIKRIT heartbeat</h3>
+<pre class="code">heartbeat(R, s)
+  signer:  <span class="ok">relayer</span>             <span class="dim">← pays the fee</span>
+  capsule: <span class="ok">PDA("capsule", P)</span>   <span class="dim">← P = x·G</span>
+  <span class="dim">→</span> "whoever knows x is alive"</pre>
+    </div>
+  </div>
+  <p class="verdict">We reviewed <strong>11 inheritance protocols</strong>. In every one, the check-in points at the owner's wallet — <strong>including the one that already uses a zero-knowledge proof.</strong> A public feed of when a holder is active, and when they stop, is a map for attackers.</p>
+</section>
+
+<!-- 4 · HOW ============================================================== -->
+<section class="slide ledger" data-vital="alive">
+  <div class="eyebrow"><span class="num">III</span>How it works</div>
+  <h2>Seal. Prove. Release.</h2>
+  <div class="steps">
+    <article class="card step">
+      <div class="numeral">I</div>
+      <h3>Seal</h3>
+      <p>Your secret is encrypted in your browser under a one-time key. The key is split with Shamir: one share for your heir, one per guardian — each sealed (HPKE, RFC 9180) to a key its holder's wallet signed for.</p>
+      <div class="detail">on-chain: share hashes only</div>
+    </article>
+    <article class="card step">
+      <div class="numeral">II</div>
+      <h3>Prove you're alive</h3>
+      <p>A Schnorr zero-knowledge proof that you still hold a liveness key that is not your wallet. Verified on-chain, bound to a counter so it works exactly once, sent by any relayer.</p>
+      <div class="detail">≈ 41,000 compute units</div>
+    </article>
+    <article class="card step">
+      <div class="numeral">III</div>
+      <h3>Release on silence</h3>
+      <p>Miss your interval and anyone may open a claim. A heartbeat cancels it; guardians can veto a false alarm. After the grace period and a guardian quorum, your heir claims — only then do guardians release their shares.</p>
+      <div class="detail">reassembled in the heir's browser</div>
+    </article>
+  </div>
+</section>
+
+<!-- 5 · PROOF ============================================================ -->
+<section class="slide" data-vital="alive" data-caption='<span class="ok">verified on a live validator</span> · app/e2e/demo-flow.mjs'>
+  <div class="eyebrow"><span class="num">IV</span>Proof, not promises</div>
+  <h2>A proof, not a person.</h2>
+  <div class="proof">
+    <img class="shot" src="../screenshots/inspector.webp" alt="What the chain sees: a heartbeat transaction with three accounts — relayer, capsule, program — and the owner's wallet stamped NOT PRESENT" />
+    <div class="stats">
+      <div class="stat"><div class="big life">0 of 6</div><p>capsule transactions that contain the owner's wallet — re-read from the chain by our end-to-end test after a full inheritance.</p></div>
+      <div class="stat"><div class="big">41,012 <span style="font-size:48px;color:var(--bone-400)">CU</span></div><p>to verify a heartbeat proof, via Solana's curve25519 syscalls.</p></div>
+      <div class="stat"><div class="big">0.0078 <span style="font-size:48px;color:var(--bone-400)">SOL</span></div><p>for 30 years of weekly heartbeats (5,000 lamports each). No token.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 6 · PRODUCT ========================================================== -->
+<section class="slide" data-vital="pending" data-caption='<span style="color:var(--amber)">silence → claim → 2-of-3 guardians → release</span>'>
+  <div class="eyebrow"><span class="num">V</span>Working product</div>
+  <h2>One family. Five wallets. <em>One browser.</em></h2>
+  <div class="gallery">
+    <figure class="tall">
+      <img class="shot" src="../screenshots/recovered.webp" alt="Heir view: three of three shares authenticated, the 12-word seed phrase recovered" />
+      <figcaption><b>Sari, the heir</b> · her share + two guardian releases rebuild the seed</figcaption>
+    </figure>
+    <figure class="wide">
+      <img class="shot" src="../screenshots/heartbeat.webp" alt="Owner dashboard with countdown and the Send ZK heartbeat button" />
+      <figcaption><b>Pak Arif, the owner</b> · one click: proof generated in the browser, sent by a relayer</figcaption>
+    </figure>
+    <figure class="crop">
+      <img class="shot" src="../screenshots/guardian.webp" alt="Guardian view: claim pending, confirm or veto" />
+      <figcaption><b>Budi &amp; Dewi, guardians</b> · confirm the claim, or veto a false alarm</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- 7 · UNDER THE HOOD =================================================== -->
+<section class="slide ledger" data-vital="alive">
+  <div class="eyebrow"><span class="num">VI</span>Under the hood</div>
+  <h2>Built like it will be attacked.</h2>
+  <div class="hood">
+    <div class="card transcript">
+<pre class="code"><span class="dim">// Fiat–Shamir, mirrored byte-for-byte TS ↔ Rust</span>
+e = SHA-512(<span class="ok">"SIKRIT:liveness:v1"</span> ‖ program
+          ‖ capsule ‖ P ‖ R ‖ <span class="ok">nonce</span>) mod ℓ
+
+<span class="dim">// on-chain, sol_curve25519 syscalls</span>
+accept ⇔ s·G − e·P == R</pre>
+      <p class="note">The counter makes every proof single-use; domain, program and capsule bind it to one purpose. A pure-Rust verifier blew past 1.4M CU — the syscall path costs 41k.</p>
+    </div>
+    <div>
+      <ul class="facts">
+        <li>HPKE RFC 9180 <span>· X25519 · HKDF-SHA256 · ChaCha20-Poly1305 · official test vectors</span></li>
+        <li>Shamir over GF(2⁸) <span>· audited library (Cure53, Zellic) · only a random key is split</span></li>
+        <li>Inbox certificates <span>· a swapped encryption key is rejected, at sealing and at release</span></li>
+        <li>Self-audit <span>· 15 findings fixed, residual risks R1–R15 documented</span></li>
+        <li>62 tests + 10 Rust unit tests <span>· plus a browser end-to-end run of the whole story</span></li>
+      </ul>
+      <div class="limits"><b>Honest limits</b>Heartbeat <em style="color:var(--bone-200);font-style:normal">times</em> and heir/guardian addresses are public. Enough colluding guardians could open a kit early. Not post-quantum yet. All on the roadmap.</div>
+    </div>
+  </div>
+</section>
+
+<!-- 8 · LANDSCAPE ======================================================== -->
+<section class="slide" data-vital="alive" data-caption="11 protocols reviewed on 1 Oct 2026">
+  <div class="eyebrow"><span class="num">VII</span>Landscape</div>
+  <h2>Inheritance exists. <em>Private liveness doesn't.</em></h2>
+  <table class="land">
+    <thead><tr><th>Project</th><th>Chain</th><th>Is the check-in linked to the owner?</th></tr></thead>
+    <tbody>
+      <tr><td>DeathClock</td><td class="chain">Solana</td><td><span class="yes">Yes</span> — its Groth16 heartbeat proof commits to the owner's key (~183k CU)</td></tr>
+      <tr><td>Dead Man's Vault</td><td class="chain">Solana</td><td><span class="yes">Yes</span> — vault derived from the owner's wallet</td></tr>
+      <tr><td>Ethernal</td><td class="chain">EVM</td><td><span class="yes">Yes</span> — every owner action is the proof of life (heirs are hidden, the owner is not)</td></tr>
+      <tr><td>Sarcophagus</td><td class="chain">Base + Arweave</td><td><span class="yes">Yes</span> — owner re-wraps from their wallet; relies on the SARCO token</td></tr>
+      <tr><td>LastSats · Heirloom</td><td class="chain">Stacks</td><td><span class="yes">Yes</span> — owner check-in transactions</td></tr>
+      <tr><td>Kaspa Safe</td><td class="chain">Kaspa</td><td><span class="yes">Yes</span> — periodic on-chain check-in</td></tr>
+      <tr><td>Serenity Shield · Deadhand</td><td class="chain">Secret · server</td><td><span class="meh">Trusted party</span> — a TEE network or a server sees every check-in</td></tr>
+      <tr class="us"><td>SIKRIT</td><td class="chain" style="color:var(--life-300)">Solana</td><td><span class="no">No</span> — a zero-knowledge proof from a non-wallet key, sent by a relayer</td></tr>
+    </tbody>
+  </table>
+  <div class="source">Sources and method: docs/RESEARCH.md</div>
+</section>
+
+<!-- 9 · BUSINESS ========================================================= -->
+<section class="slide ledger" data-vital="alive">
+  <div class="eyebrow"><span class="num">VIII</span>Business</div>
+  <h2>Open core. <em>No token.</em></h2>
+  <div class="revenue">
+    <div class="card"><div class="k">B2B2C</div><h3>Wallet integrations</h3><p>An "Inheritance" tab inside Solana wallets, built on our dependency-light SDK. Retention for them, distribution for us.</p></div>
+    <div class="card"><div class="k">Subscription</div><h3>Watcher &amp; relayer</h3><p>$2–5 / month: heartbeat reminders, an alarm the moment a claim opens, relaying with an SLA. No lock-in — anyone can relay.</p></div>
+    <div class="card"><div class="k">Services</div><h3>Professional guardians</h3><p>Notaries and estate planners as guardians — a natural fit for Indonesia's <i>akta wasiat</i>. They confirm; they can never open alone.</p></div>
+    <div class="card"><div class="k">Protocol</div><h3>Release fee</h3><p>Optional, paid once — only when an inheritance actually happens. Heartbeats stay near-free forever.</p></div>
+  </div>
+  <div class="gtm">
+    <div class="path">Indonesia first <span>→</span> crypto communities, campuses, notaries <span>→</span> self-custody users worldwide through their wallets.</div>
+    <div class="econ"><b>Why no token:</b> a dead man's switch must outlive market cycles. SIKRIT's program and SDK stay open source; revenue comes from services around them, not from speculation.</div>
+  </div>
+</section>
+
+<!-- 10 · TEAM & CLOSE ==================================================== -->
+<section class="slide" data-vital="alive">
+  <div class="eyebrow"><span class="num">IX</span>Team &amp; next</div>
+  <h2>Built by a cryptographer-in-training.</h2>
+  <div class="close">
+    <div class="card founder">
+      <svg data-seal="MG" data-tone="seal" width="120" height="120"></svg>
+      <div>
+        <h3>Muhammad Ghani Nurramdhan</h3>
+        <p>Founder · 4th-year student, Cryptographic Software Engineering at <b style="color:var(--bone-100);font-weight:500">Politeknik Siber dan Sandi Negara</b> — Indonesia's state polytechnic for cyber security and cryptography.</p>
+      </div>
+    </div>
+    <div class="roadmap">
+      <div>
+        <h4>Next · v1.1</h4>
+        <ul><li>Watcher alerts when a claim opens</li><li>Origin-bound key derivation</li><li>Ledger support</li><li>External audit → mainnet</li></ul>
+      </div>
+      <div>
+        <h4 class="later">Then · v2</h4>
+        <ul><li>Heartbeats inside an anonymity set — hide <i>which</i> capsule</li><li>Heirs &amp; guardians as hash commitments</li><li>Post-quantum hybrid KEM (X-Wing)</li></ul>
+      </div>
+    </div>
+  </div>
+  <div class="finale">
+    <div class="line">Prove you're alive.<br /><em>Reveal nothing else.</em></div>
+    <div class="links"><span>code</span> <span data-fill="repo">github.com/Darkside0908/SIKRIT</span><br /><span>program</span> FJKqf…Tc45F<br /><span>license</span> MIT · open source</div>
+  </div>
+</section>
+
+</main>
+<div class="hint">← → step · F present</div>
+
+<script>
+  // Wax seal (same shape as the app's brand mark).
+  const SEAL_TONES = { seal: ["#e8674a", "#b5341c", "#6e1c0f", "#fbeee4"], life: ["#9ccfb8", "#5c9c83", "#244a3c", "#fbeee4"] };
+  const SEAL_PATH = "M32 3c3 0 4 3 7 3.5s6-1.5 8 .5 0 5 2 7.5 5.5 2 6.5 5-2 4.5-1.5 7.5 3.5 5 2.5 8-4.5 3-6 5.5-1 6-3.5 7.5-5.5-.5-8 1-3.5 4.5-7 4.5-4-3-7-3.5-6 1.5-8-.5 0-5-2-7.5-5.5-2-6.5-5 2-4.5 1.5-7.5S3.5 33 4.5 30s4.5-3 6-5.5 1-6 3.5-7.5 5.5.5 8-1S29 3 32 3z";
+  document.querySelectorAll("svg[data-seal]").forEach((svg, i) => {
+    const [light, mid, dark, ink] = SEAL_TONES[svg.dataset.tone || "seal"];
+    const label = svg.dataset.seal;
+    svg.setAttribute("viewBox", "0 0 64 64");
+    svg.innerHTML = `<defs><radialGradient id="sg${i}" cx="38%" cy="32%" r="75%"><stop offset="0" stop-color="${light}"/><stop offset=".55" stop-color="${mid}"/><stop offset="1" stop-color="${dark}"/></radialGradient></defs>
+      <path fill="url(#sg${i})" d="${SEAL_PATH}"/>
+      <circle cx="32" cy="32" r="18.5" fill="none" stroke="${ink}" stroke-opacity=".35" stroke-width="1.2"/>
+      <text x="32" y="33" text-anchor="middle" dominant-baseline="central" font-family="Gloock, Georgia, serif" font-size="${label.length > 1 ? 15 : 22}" fill="${ink}" fill-opacity=".92">${label}</text>`;
+  });
+
+  // Masthead, folio and ECG trace on every slide; frames for screen scaling.
+  const slides = [...document.querySelectorAll(".slide")];
+  const BEAT = "L30,50 Q35,43 40,50 L46,50 L50,18 L55,80 L59,50 L70,50 Q78,38 86,50 L100,50";
+  const COLORS = { alive: "#7fbca2", pending: "#e3ae52", flat: "#cf4429" };
+  slides.forEach((slide, i) => {
+    const vital = slide.dataset.vital || "alive";
+    let d = "M0,50";
+    for (let b = 0; b < 19; b++) {
+      const weak = vital === "pending" && b % 2 === 1;
+      d += " " + (vital === "flat" || weak ? `L${(b + 1) * 100},50` : BEAT.replace(/(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/g, (_, x, y) => `${Number(x) + b * 100},${y}`));
+    }
+    const color = COLORS[vital];
+    slide.insertAdjacentHTML("afterbegin", `
+      <header class="masthead"><div class="brand"><svg data-seal="S" width="44" height="44"></svg><div>SIKRIT<small>dead man's switch</small></div></div>
+      <div class="folio"><b>${String(i + 1).padStart(2, "0")}</b> / ${String(slides.length).padStart(2, "0")}</div></header>`);
+    slide.insertAdjacentHTML("beforeend", `
+      <div class="vitals"><svg viewBox="0 0 1900 100" preserveAspectRatio="none">
+        <path d="M0,50 L1900,50" stroke="#332d25" stroke-width="1" stroke-dasharray="2 7"/>
+        <path d="${d}" fill="none" stroke="${color}" stroke-opacity=".25" stroke-width="2"/>
+        ${vital === "flat" ? "" : `<path d="${d}" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"
+          stroke-dasharray="260 4600" style="--len:4860;animation:trace 5.5s linear infinite;filter:drop-shadow(0 0 7px ${color})"/>`}
+      </svg></div>
+      ${slide.dataset.caption ? `<div class="vitals-caption">${slide.dataset.caption}</div>` : ""}`);
+    const frame = document.createElement("div");
+    frame.className = "frame";
+    slide.replaceWith(frame);
+    frame.appendChild(slide);
+  });
+  // Brand seals were injected after the first pass; draw them too.
+  document.querySelectorAll(".masthead svg[data-seal]").forEach((svg, i) => {
+    const [light, mid, dark, ink] = SEAL_TONES.seal;
+    svg.setAttribute("viewBox", "0 0 64 64");
+    svg.innerHTML = `<defs><radialGradient id="mg${i}" cx="38%" cy="32%" r="75%"><stop offset="0" stop-color="${light}"/><stop offset=".55" stop-color="${mid}"/><stop offset="1" stop-color="${dark}"/></radialGradient></defs>
+      <path fill="url(#mg${i})" d="${SEAL_PATH}"/><text x="32" y="33" text-anchor="middle" dominant-baseline="central" font-family="Gloock, Georgia, serif" font-size="22" fill="${ink}">S</text>`;
+  });
+  const repo = new URLSearchParams(location.search).get("repo");
+  if (repo) document.querySelectorAll('[data-fill="repo"]').forEach((el) => (el.textContent = repo));
+
+  // Screen: scale to the window; F toggles one-slide-at-a-time presenting.
+  const frames = [...document.querySelectorAll(".frame")];
+  let current = 0;
+  function layout() {
+    const present = document.body.classList.contains("present");
+    const scale = present ? Math.min(innerWidth / 1920, innerHeight / 1080) : Math.min(1, (innerWidth * 0.94) / 1920);
+    document.documentElement.style.setProperty("--scale", scale);
+    frames.forEach((f, i) => f.classList.toggle("current", i === current));
+  }
+  function go(delta) {
+    current = Math.max(0, Math.min(frames.length - 1, current + delta));
+    if (document.body.classList.contains("present")) layout();
+    else frames[current].scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+  addEventListener("resize", layout);
+  addEventListener("keydown", (e) => {
+    if (e.key === "ArrowRight" || e.key === "PageDown" || e.key === " ") (e.preventDefault(), go(1));
+    if (e.key === "ArrowLeft" || e.key === "PageUp") (e.preventDefault(), go(-1));
+    if (e.key === "f" || e.key === "F") (document.body.classList.toggle("present"), layout());
+  });
+  addEventListener("click", () => document.body.classList.contains("present") && go(1));
+  if (new URLSearchParams(location.search).has("present")) document.body.classList.add("present");
+  layout();
+</script>
+</body>
+</html>

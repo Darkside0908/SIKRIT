@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p .",
     "localnet": "node scripts/localnet.mjs",
-    "e2e": "node scripts/localnet.mjs --e2e"
+    "e2e": "node scripts/localnet.mjs --e2e",
+    "deck": "node scripts/deck.mjs"
   },
   "dependencies": {
     "@fontsource/fragment-mono": "^5.3.0",
@@ -36,5 +37,6 @@
     "tailwindcss": "^4.3.3",
     "typescript": "~5.9.3",
     "vite": "^8.3.1"
-  }
+  },
+  "license": "MIT"
 }

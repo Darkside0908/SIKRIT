@@ -3,6 +3,7 @@ name = "sikrit"
 version = "0.1.0"
 description = "SIKRIT — Privacy-Preserving Dead Man's Switch on Solana"
 edition = "2021"
+license = "MIT"
 
 [lib]
 crate-type = ["cdylib", "lib"]

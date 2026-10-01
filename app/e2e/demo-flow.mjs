@@ -10,6 +10,7 @@
  *   RPC_URL      cluster it talks to   (default http://127.0.0.1:8899)
  *   CHROME_PATH  Chrome/Chromium binary (default /usr/bin/google-chrome)
  *   HEADED=1     watch it run
+ *   SHOTS_DIR    also save curated element screenshots there (docs/screenshots)
  *
  * Needs capsule timers of 60 s (the localnet defaults in the create form), so a run takes ~3 min.
  */
@@ -22,12 +23,14 @@ const BASE = process.env.BASE_URL ?? "http://localhost:5173";
 const RPC = process.env.RPC_URL ?? "http://127.0.0.1:8899";
 const CHROME = process.env.CHROME_PATH ?? "/usr/bin/google-chrome";
 const OUT = new URL("./out/", import.meta.url).pathname;
+const SHOTS = process.env.SHOTS_DIR;
 const SAMPLE_SEED = "abandon ability able about above absent absorb abstract absurd abuse access accident";
 const MINUTE = 60_000;
 
 mkdirSync(OUT, { recursive: true });
+if (SHOTS) mkdirSync(SHOTS, { recursive: true });
 const browser = await chromium.launch({ executablePath: CHROME, headless: !process.env.HEADED });
-const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: SHOTS ? 2 : 1 });
 const problems = [];
 page.on("pageerror", (e) => problems.push(`pageerror: ${e.message}`));
 page.on("console", (m) => m.type() === "error" && problems.push(`console.error: ${m.text()}`));
@@ -40,6 +43,14 @@ async function step(name, run) {
   console.log(`ok (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
 }
 const shot = (name) => page.screenshot({ path: `${OUT}${name}.png`, fullPage: true });
+/** Curated screenshot of one element (or the viewport) for the docs; no-op without SHOTS_DIR. */
+async function curate(name, target) {
+  if (!SHOTS) return;
+  await page.waitForTimeout(900); // let entrance animations settle
+  const path = `${SHOTS}/${name}.png`;
+  await (target ? target.screenshot({ path }) : page.screenshot({ path }));
+}
+const section = (text) => page.locator("section", { hasText: text }).last();
 const go = (hash) => page.goto(`${BASE}/#/${hash}`);
 const button = (name) => page.getByRole("button", { name });
 const actAs = (name) => button(new RegExp(`${name}$`)).click();
@@ -60,6 +71,11 @@ let owner;
 
 try {
   await step("owner derives the liveness key from a wallet signature", async () => {
+    if (SHOTS) {
+      await go("");
+      await page.getByText("Don't take your keys").waitFor();
+      await curate("home");
+    }
     await go("owner");
     await button("Derive my liveness key").click();
     await button("Invite the demo family").waitFor();
@@ -70,6 +86,7 @@ try {
     await text("✓ signed by Sari").waitFor();
     await button("Use a sample seed phrase").click();
     await shot("01-create");
+    await curate("create", page.locator("main"));
   });
 
   await step("owner seals the seed phrase and registers the capsule", async () => {
@@ -91,6 +108,8 @@ try {
     await text("Not present").waitFor();
     if (await page.getByText("Present!").count()) throw new Error("owner wallet present in heartbeat");
     await shot("03-heartbeat");
+    await curate("heartbeat", page.locator("section", { has: button("Send ZK heartbeat") }));
+    await curate("inspector", section("What the chain sees"));
   });
 
   await step("owner falls silent past the interval", async () => {
@@ -112,6 +131,7 @@ try {
       await button("Confirmed").waitFor({ timeout: MINUTE });
     }
     await shot("05-confirmed");
+    await curate("guardian", page.locator("article").first());
   });
 
   await step("heir claims once the grace period ends", async () => {
@@ -139,10 +159,13 @@ try {
     );
     if (words.join(" ") !== SAMPLE_SEED) throw new Error(`recovered "${words.join(" ")}"`);
     const hold = button("Hold to reveal");
+    const recovery = section("Your key to this capsule");
+    await recovery.scrollIntoViewIfNeeded();
     await hold.hover();
     await page.mouse.down();
     await page.waitForTimeout(400);
     await shot("07-recovered");
+    await curate("recovered", recovery);
     await page.mouse.up();
   });
 
@@ -150,6 +173,7 @@ try {
     await go(`capsule/${capsule.toBase58()}`);
     await text("Public record").waitFor();
     await shot("08-public");
+    await curate("public", page.locator("main"));
   });
 
   await step("chain check: owner wallet absent from every capsule transaction", async () => {
