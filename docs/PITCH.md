@@ -1,123 +1,163 @@
-# 🪦 SIKRIT — *Privacy-Preserving Dead Man's Switch*
+# 🪦 SIKRIT — *Privacy-Preserving Dead Man's Switch on Solana*
 
-> **Tagline:** "Jangan bawa rahasiamu ke liang kubur — tapi jangan biarkan dunia tahu kamu masih di sini."
-> **One-liner:** Satu-satunya protokol warisan digital di mana **liveness si pemilik ikut terenkripsi** — dunia (termasuk guardian & ahli waris) tidak pernah tahu kamu masih hidup atau sudah tiada, sampai saatnya kapsul terbuka.
+> **Tagline:** *"Don't take your keys to the grave."* — *"Jangan bawa kuncimu ke liang kubur."*
+>
+> **One-liner (EN):** SIKRIT is a dead man's switch on Solana where proving you're alive doesn't reveal who you are.
+>
+> **One-liner (ID):** Dead man's switch di Solana yang bukti hidupnya tidak membocorkan siapa kamu.
 
----
-
-## 1. Masalah (Problem)
-
-- **>$100 miliar** aset kripto mati permanen karena pemilik wafat tanpa menyerahkan akses ke keluarga. *(BitLegacy, Serenity, Deadhand semuanya mengutip angka ini sebagai motivasi — problem ter-validasi.)*
-- Keluarga **MAU** mewariskan, tapi tidak ada cara **trustless**:
-  - Serahkan ke custodian terpusat → *single point of failure* (bisa dicuri / dibekukan probate).
-  - Tulis seed phrase di kertas → bisa hilang, bisa ketahuan orang.
-- **Tegangan inti (the tension):** ahli waris harus bisa mengakses **kalau kamu sudah tiada**, tapi **JANGAN PERNAH** bisa mengakses selama kamu masih hidup.
-
-Masalah ini emosional + finansial, bisa dicerna juri non-teknis dalam 5 detik.
+Event: **Colosseum Crypto World's Fair** (deadline 12 Okt 2026, 23.59 PT = 13 Okt 13.59 WIB). Target: **Solana track**,
+**University Award**, **Public Goods Award**, top-20. Fakta event, kompetitor, dan angka pasar beserta sumbernya ada di
+[`docs/RESEARCH.md`](RESEARCH.md) — **semua klaim di dokumen ini harus konsisten dengan file itu.**
 
 ---
 
-## 2. Kenapa Semua yang Sudah Ada Gagal (Competitive Landscape)
+## 1. Masalah
 
-| Proyek | Chain | Mekanisme | Kelemahan Fatal |
-|---|---|---|---|
-| **Sarcophagus** | Ethereum + Arweave | Archaeologist nodes + token SARCO | Butuh gas ETH + token; kalau harga SARCO crash, incentive node mati → kapsul terkunci selamanya |
-| **Serenity Shield (SERSH)** | ETH/BNB/Secret Network | Shamir 3-NFT + biometrik | Butuh hardware wallet khusus + KYC + trust ke Secret Network |
-| **Deadhand Protocol** | Server-assisted (bukan on-chain murni) | Shamir 2-of-3 + email heartbeat | Server pegang *master key* → masih ada titik kepercayaan; email heartbeat bisa gagal |
-| **BitLegacy** | Stacks (Bitcoin L2) | Dead-man's switch + guardian 2-of-3 | Khusus sBTC; `check-in` on-chain **bocor metadata** siapa yang masih hidup |
-| **Kaspa Safe** | Kaspa (PoW) | Covenant vault + checkin | `checkin` on-chain **bocor liveness**; niche chain Kaspa |
+**Self-custody tidak punya tombol "lupa password", dan tidak punya ahli waris.**
 
-### Penyakit yang SAMA di semua pesaing 👇
+- Diperkirakan **2,3–3,7 juta BTC (11–18% suplai) terkunci permanen**: lupa kunci, perangkat hilang, dan pemegang
+  yang meninggal tanpa mewariskan akses. Setiap kenaikan adopsi self-custody memperbesar angka ini.
+- Di Indonesia saja ada **22,93 juta investor kripto** (OJK, Juli 2026). Sebagian besar keluarga mereka tidak tahu
+  harus berbuat apa kalau pemegangnya meninggal.
+- **Tegangan inti:** keluarga harus bisa membuka wallet-mu **saat kamu sudah tiada**, dan **tidak boleh pernah** bisa
+  selama kamu masih hidup.
 
-> **Heartbeat / proof-of-life mereka BOCOR di-chain.**
-> Setiap "check-in" on-chain secara publik menyatakan: *"alamat X masih hidup & aktif."*
+Pilihan hari ini semuanya mengorbankan sesuatu:
 
-Artinya semua proyek yang ada **mengorbankan privasi si pemilik** demi mekanisme warisan. Jika alamat diketahui, siapa pun bisa men-stalk kapan terakhir pemilik "check-in" → bocor info sensitif (sakit? hilang? lama tidak aktif?).
-
-**Celah ini belum ada satu pun yang menutup.** Dan kebetulan ini persis lapangan kriptografi — lapangan di mana SIKRIT dibangun.
-
----
-
-## 3. Solusi (What SIKRIT Is)
-
-**SIKRIT** = *Privacy-Preserving Dead Man's Switch* di Solana.
-
-### 5 Pilar Mekanisme
-
-1. **🧊 Kapsul Rahasia** — Secret (seed phrase / key material / dokumen) dipecah dengan **Shamir's Secret Sharing** menjadi *N* share; tiap share dienkripsi ke public key ahli waris. Tidak ada satu pihak pun yang memegang utuh.
-2. **💓 Heartbeat (Proof-of-Life)** — Pemilik membuktikan masih hidup secara periodik. Di Solana biayanya ~$0.0001 → heartbeat mingguan **gratis** (di Ethereum ini pembunuh yang bikin proyek sejenis mati suri).
-3. **🛡️ Guardian Network (Social Recovery)** — *N-of-M* orang kepercayaan ikut mem-vouch. Kalau owner benar-benar hilang, guardian bisa konfirmasi pelepasan.
-4. **⏳ Time-Lock + Claim Window + Veto** — Setelah X bulan tanpa heartbeat, ahli waris boleh klaim. Ada *grace period* agar guardian bisa *veto* (anti-false-trigger / proteksi hukum).
-5. **🎨 NFT Kapsul** — "Surat wasiat digital" jadi NFT yang bisa dipindah / diwariskan sebagai bagian estate planning, sekaligus objek demo yang kece buat juri.
-
----
-
-## 4. Differentiator Pembeda (Kenapa SIKRIT Menang)
-
-> **Jangan pitch sebagai "crypto inheritance app" — itu crowded.** Pitch sebagai *Privacy-Preserving Dead Man's Switch*.
-
-### 🧠 1. ZK Proof-of-Liveness (JURUS PEMBUNUH — tidak ada yang punya)
-
-- Check-in jadi **Zero-Knowledge Proof**: buktikan "aku masih pegang kunci" **tanpa reveal** siapa, kapan, di address mana.
-- MVP pakai **Schnorr proof-of-knowledge** (jujur-jujur ZK, ringan, bisa dikejar dalam 12 hari).
-- Hasil on-chain: hanya terlihat "ada bukti valid" — **tanpa metadata identitas**. Inilah momen yang bikin juri terkesima: *"oh, ini yang bikin beda."*
-
-### 🚀 2. Solana-Native Economics (bunuh failure mode Sarcophagus & Ethereum)
-
-- Fee heartbeat mingguan ~$0.0001; time-lock & vault murah. Model yang di Ethereum/Stacks/Kaspa **tidak ekonomis**.
-- **Tanpa token**: tidak ada incentive crash seperti SARCO. Pendapatan dari *release fee*, bukan token spekulatif.
-
-### 🔒 3. Zero Server Custody & Zero Hardware (bunuh Deadhand & Serenity)
-
-- **Tidak ada master key di server** (lawan: Deadhand).
-- **Tidak butuh hardware biometrik / KYC** (lawan: Serenity Shield).
-- Shamir SSS + enkripsi ke pubkey ahli waris, semua client-side & trustless.
-
----
-
-## 5. Positioning Jujur (Anti-ketangkep-juri di Q&A)
-
-Jangan klaim *"kami satu-satunya crypto inheritance"* — itu salah dan akan ketangkep juri. Klaim yang benar & tajam:
-
-> *"Inheritance protocols exist — but none of them protect the owner's privacy. SIKRIT is the first privacy-preserving liveness protocol."*
-
-Posisi ini **jujur + beda + defensible**.
-
----
-
-## 6. Kenapa Ramainya Pesaing Justru Kabar Baik
-
-1. **Problem sudah ter-validasi** → tidak perlu meyakinkan juri bahwa masalahnya nyata. Cukup bilang: *"5 proyek sudah coba, semuanya gagal menutup privasi liveness — kami menutup celah itu."*
-2. **Semua pesaing punya cacat yang bisa disebut satu-satu** di pitch deck (tabel di §2 jadi slide "Competitive Landscape").
-3. **Judges kripto** (Yurii Olentir — ITX Security, David — Mad Shield) langsung menangkap nuansa ZK-nya — dan sebagai mahasiswa kriptografi Poltek SSN, SIKRIT nendang di lapangan yang mereka hormati.
-
----
-
-## 7. Strategi Menang (Beyond Teknis)
-
-- **Demo Story 30 detik yang menghantui:** *"Bapak A bikin kapsul → 6 bulan no heartbeat → ahli waris klaim → dana cair."* Emosional + mudah dicerna. Simulasi "kematian" jadi momen klimaks video pitch.
-- **University Award $10k:** Bungkus sebagai **riset kriptografi terapan** (Shamir SSS + ZK + time-lock). Juri yang kelas pekerja tidak bisa klaim ini.
-- **Business model:** Free basic capsule → fee kecil saat *release* + premium guardian network + B2B ke wallet/exchange untuk fitur warisan.
-- **Nama "SIKRIT"** (slang "rahasia") + tagline jenazah → *rememberable*, juri tidak akan lupa.
-
----
-
-## 8. Roadmap 12 Hari (Realistis Solo)
-
-| Hari | Target |
+| Cara | Masalah |
 |---|---|
-| 1–2 | Scaffold Anchor program (`create_capsule`, `heartbeat`, `claim`, `guardian_veto`) + test |
-| 3–4 | Shamir SSS + encryption lib + Schnorr proof-of-liveness |
-| 5–7 | Frontend (flow bikin kapsul → dashboard heartbeat → flow klaim) |
-| 8–9 | Deploy devnet + test E2E + script demo |
-| 10–11 | Pitch deck + video 3 menit |
-| 12 | Submit di Colosseum |
+| Seed di kertas / brankas / notaris | Bisa dibaca kapan saja oleh siapa pun yang memegangnya, jadi ahli waris bisa membukanya sebelum waktunya |
+| Layanan kustodian (multisig berbayar, server) | KYC, biaya tahunan, pihak tepercaya yang bisa tutup atau bocor |
+| Dead man's switch on-chain | Setiap check-in adalah **siaran publik yang ditandatangani wallet-mu**: *"alamat ini masih hidup dan aktif, hari ini"* |
 
----
+## 2. Insight
 
-## 9. Metrik Sukses (untuk slide "Traction / Impact")
+Semua dead man's switch on-chain yang kami periksa (11 proyek, lihat RESEARCH.md §2) **menautkan bukti hidup ke wallet
+pemilik**: vault-nya diturunkan dari alamat pemilik, dan check-in-nya ditandatangani wallet itu. Hasilnya feed publik
+tentang kapan seorang pemegang aset aktif, kapan ia berhenti aktif, dan berapa nilai yang menunggu ahli warisnya.
+Untuk pemegang aset besar, itu peta bagi penjahat.
 
-- **Zero metadata leakage** pada heartbeat (bukti konsep ZK tervalidasi di devnet).
-- **<$0.001** total biaya heartbeat bulanan (vs. gas ETH Sarcophagus yang bisa >$1/check-in).
-- **3 jalur recovery** tanpa satu pun titik kepercayaan (owner / heir / guardian).
-- **Waktu setup < 2 menit**, tanpa KYC, tanpa hardware.
+Bukti hidup tidak perlu identitas. Cukup bukti bahwa **seseorang yang memegang kunci rahasia tertentu masih ada**.
+Itu masalah kriptografi klasik, *proof of knowledge*, dan di Solana bisa diverifikasi murah lewat syscall curve25519.
+
+**Founder–market fit:** dibangun oleh mahasiswa tingkat 4 **Politeknik Siber dan Sandi Negara** (Rekayasa Perangkat
+Lunak Kripto) yang belajar kriptografi terapan untuk negara, dan ingin keluarganya sendiri bisa mewarisi aset kriptonya.
+
+## 3. Solusi: cara kerja SIKRIT
+
+1. **Seal.** Rahasia (seed phrase, password, pesan) dienkripsi di browser dengan kunci acak sekali pakai. Kunci itu
+   dipecah dengan **Shamir's Secret Sharing**: satu share untuk ahli waris, satu per guardian. Tiap share dienkripsi
+   (**HPKE, RFC 9180**) ke kunci inbox yang **ditandatangani wallet pemegangnya**, sehingga tidak ada kunci yang bisa
+   diselundupkan di tengah jalan. On-chain hanya disimpan **hash** tiap share.
+2. **Prove you're alive.** Pemilik mengirim **bukti Schnorr zero-knowledge** bahwa ia masih memegang kunci liveness
+   `x` (yang diturunkan dari tanda tangan wallet, tapi bukan kunci wallet). Bukti diverifikasi on-chain (~41k CU),
+   terikat ke counter (setiap bukti hanya berlaku sekali), dan **dikirim oleh relayer**: **tidak ada wallet pemilik di
+   transaksi mana pun**.
+3. **Release on silence.** Kalau pemilik diam melewati interval, siapa pun boleh membuka klaim. Heartbeat tetap bisa
+   membatalkannya; guardian bisa veto alarm palsu (terbatas, anti-DoS). Setelah grace period dan kuorum guardian
+   mengonfirmasi, ahli waris klaim. **Baru setelah itu** guardian me-release share-nya ke inbox ahli waris, dan
+   rahasia tersusun kembali **di browser ahli waris**.
+
+Ahli waris sendirian memegang share yang secara statistik independen dari rahasia: ia tidak bisa membuka apa pun
+sebelum waktunya.
+
+## 4. Kompetitor
+
+| Proyek | Chain | Yang diwariskan | Heartbeat tertaut ke wallet pemilik? |
+|---|---|---|---|
+| DeathClock *(entri event ini)* | Solana | SOL | **Ya**: bukti Groth16 (~183k CU) memuat pubkey pemilik; PDA `["vault", owner]` |
+| Dead Man's Vault | Solana Seeker | token, NFT | **Ya**: PDA `["vault", owner]` |
+| dead-man-switch | Solana | SOL/SPL | **Ya** |
+| Ethernal | EVM | dana, NFT, surat | **Ya**: setiap aksi pemilik = proof of life (ahli waris disamarkan, pemilik tidak) |
+| Sarcophagus | Base + Arweave | data | **Ya**: re-wrap dari wallet pemilik; bergantung token SARCO |
+| LastSats / Heirloom | Stacks | sBTC / STX | **Ya** |
+| Kaspa Safe | Kaspa | KAS | **Ya** |
+| Serenity Shield | Secret Network | seed (3 NFT) | bergantung TEE Secret Network |
+| Deadhand | server | seed (Shamir 2-of-3) | server melihat setiap check-in (pihak tepercaya) |
+| **SIKRIT** | **Solana** | **rahasia apa pun** (seed lintas chain) | **Tidak**: bukti tanpa identitas, dikirim relayer |
+
+**Klaim yang boleh dipakai:** *"Of the 11 inheritance protocols we reviewed, none hides who is checking in. SIKRIT is,
+to our knowledge, the first dead man's switch whose proof of life cannot be linked to the owner's wallet."*
+
+**Jangan klaim:** "ZK heartbeat pertama di Solana" (DeathClock sudah memakai Groth16), "satu-satunya aplikasi warisan
+kripto", atau bahwa waktu heartbeat tersembunyi (tidak).
+
+## 5. Bukti, bukan klaim
+
+| Klaim | Bukti di repo |
+|---|---|
+| Heartbeat tanpa wallet pemilik | E2E Chrome (`app/e2e/demo-flow.mjs`) membaca ulang **semua 6 transaksi kapsul** di chain: wallet pemilik muncul di **0** |
+| Murah | Verifikasi heartbeat **41.012 CU**; fee 5.000 lamport. Heartbeat mingguan 30 tahun ≈ **0,0078 SOL** |
+| Kriptografi benar | Transkrip Fiat–Shamir dikunci *known-answer vector* lintas bahasa (TS ↔ Rust); HPKE lolos vektor resmi RFC 9180; Shamir pakai library teraudit (Cure53 + Zellic) |
+| Aman | Self-audit 15 temuan (`docs/SECURITY-REVIEW.md`): replay, double-vote guardian, veto DoS, swap kunci inbox, dst. — semua High/Critical sudah diperbaiki dan dites |
+| Bekerja end-to-end | 62 test (LiteSVM + SDK + client) + 10 unit test Rust + E2E browser 12 langkah: seed phrase pulih identik di browser ahli waris |
+
+## 6. Bisnis & go-to-market *(rencana; belum ada pendapatan)*
+
+**Model: open core, tanpa token.** Program dan SDK open-source (public good) dan gratis; uang datang dari layanan di
+sekitarnya, bukan dari spekulasi.
+
+1. **Integrasi wallet (B2B2C).** Tab "Warisan" di wallet Solana (Phantom, Solflare, Backpack) memakai SDK
+   `sdk/client.ts` + `sdk/kit.ts`, yang dependensinya ringan dan tidak butuh Anchor di browser. Wallet mendapat fitur
+   retensi; SIKRIT mendapat distribusi + biaya integrasi/dukungan.
+2. **Watcher & relayer premium** (~$2–5/bulan). Pengingat heartbeat, **alarm saat klaim dibuka** (agar pemilik sempat
+   membatalkan, R8), relayer dengan SLA. Heartbeat tetap bisa dikirim siapa pun, jadi tidak ada lock-in.
+3. **Guardian profesional.** Notaris dan perencana waris sebagai guardian. Cocok dengan praktik **akta wasiat** di
+   Indonesia: notaris bisa ikut mengonfirmasi klaim tanpa pernah bisa membuka rahasia sendirian.
+4. **Biaya release opsional** di program (v2), dibayar sekali saat warisan benar-benar terjadi.
+
+**Go-to-market:** mulai dari Indonesia (22,93 juta investor, budaya waris keluarga yang kuat, komunitas Solana lokal),
+lewat komunitas kripto, kampus, dan notaris/perencana keuangan. Setelah itu pengguna self-custody global lewat wallet.
+
+**Validasi demand:** wawancara singkat calon pengguna dan notaris (formulir di `docs/SUBMISSION.md`) sebelum submit.
+
+## 7. Peta ke kriteria juri resmi
+
+| Kriteria (Rules §8) | Jawaban SIKRIT |
+|---|---|
+| **Functionality** | Program Anchor + SDK + app berjalan end-to-end; 62 test + E2E browser; kode diaudit sendiri dengan temuan terdokumentasi |
+| **Potential Impact** | Jutaan BTC terkunci permanen; setiap pengguna self-custody butuh rencana waris; primitive privasi yang bisa dipakai ulang (*proof of liveness* tanpa identitas) |
+| **Novelty** | Heartbeat tanpa identitas: tidak ada di 11 proyek yang kami periksa. Bukti Schnorr diverifikasi dengan syscall curve25519 dalam 41k CU |
+| **UX** | Tanpa token, tanpa KYC, tanpa hardware khusus. Pemilik tidak perlu SOL dan tidak perlu backup kunci baru (diturunkan ulang dari wallet). Setup ±2 menit |
+| **Open-source** | Seluruh repo terbuka; SDK tanpa Anchor di browser; heartbeat signer-less sehingga siapa pun bisa membangun relayer/watcher; format kit berversi |
+| **Business Plan** | Open core: integrasi wallet, watcher/relayer premium, guardian profesional (notaris) |
+
+## 8. Persiapan Q&A (jawaban jujur)
+
+- **"Is a Schnorr proof really zero-knowledge?"** Ya, dalam arti standar: Schnorr adalah *honest-verifier* ZK proof of
+  knowledge, dibuat non-interaktif dengan Fiat–Shamir (random oracle). Secara matematis setara tanda tangan Schnorr
+  dengan kunci khusus. Kekuatannya ada pada **unlinkability + anti-replay + domain separation**, bukan pada SNARK.
+- **"Is the heartbeat time hidden?"** Tidak. *Siapa* yang tersembunyi, *kapan* tetap publik (R1). Roadmap v2: himpunan
+  anonim (ring signature / bukti keanggotaan) supaya heartbeat tidak menunjuk kapsul tertentu.
+- **"Can guardians collude early?"** Ya, kalau cukup banyak: rahasia terbuka dengan **k = kuorum + 1** share, yaitu
+  ahli waris + kuorum guardian, **atau** k guardian tanpa ahli waris (kalau jumlah guardian ≥ k). Ini asumsi
+  kepercayaan yang sama dengan social recovery mana pun, dan sengaja dipertahankan sebagai jalur pemulihan kalau
+  ahli waris kehilangan wallet (R13, R15). Ahli waris sendirian, atau kuorum guardian tanpa ahli waris, tidak bisa
+  membuka apa pun. Release hanya setelah `Claimed` adalah janji guardian yang ditegakkan app (SIK-11), bukan paksaan
+  kriptografis; wizard memperingatkan pemilik soal ini saat memilih kuorum.
+- **"What if the owner loses their wallet?"** Kunci liveness tidak bisa diturunkan lagi, heartbeat berhenti, dan kapsul
+  terbuka ke ahli waris setelah interval + grace. Gagalnya ke arah yang aman untuk keluarga; pemilik bisa membuat
+  kapsul baru.
+- **"Isn't the relayer a central point?"** Heartbeat tidak butuh signer: siapa pun bisa me-relay, relayer tidak bisa
+  memalsukan bukti, dan pemilik bisa memakai fee payer mana pun (asal bukan wallet-nya sendiri).
+- **"Upgrade authority?"** Untuk produksi dipindah ke multisig atau dibuat immutable setelah audit (R4).
+- **"Why Solana?"** Syscall curve25519 membuat verifikasi Schnorr murah (41k CU), fee per heartbeat 5.000 lamport, dan
+  PDA bisa diturunkan dari kunci publik `P`, bukan dari wallet. Di chain dengan gas mahal, heartbeat mingguan
+  selama puluhan tahun tidak masuk akal.
+
+## 9. Roadmap
+
+- **v1.1 (pasca-hackathon):** watcher notifikasi, pengikatan origin pada pesan derivasi kunci (R9), dukungan Ledger
+  (R12), instruksi `close` (R7), deploy mainnet setelah audit eksternal.
+- **v2:** heartbeat dalam himpunan anonim (R1), heir/guardian sebagai komitmen hash (R3), KEM hibrida post-quantum
+  X-Wing (R10), migrasi Anchor 1.x / SBPF v3 (R6), opsional NFT "surat wasiat" yang bisa dipindah.
+
+## 10. Demo story (30 detik)
+
+> *Pak Arif menyegel seed phrase-nya untuk putrinya, Sari. Adiknya Budi, notaris keluarga Dewi, dan sahabatnya Rizal
+> menjadi guardian. Setiap minggu Pak Arif membuktikan dirinya masih hidup, dan tidak ada satu pun transaksi yang
+> menyebut namanya. Suatu hari ia berhenti. Klaim dibuka, dua guardian mengonfirmasi, masa tenggang lewat, dan seed
+> phrase itu tersusun kembali di browser Sari. Bukan di server. Bukan di chain.*
+
+Naskah video pitch & demo: `docs/VIDEO-SCRIPT.md`. Form submission: `docs/SUBMISSION.md`.

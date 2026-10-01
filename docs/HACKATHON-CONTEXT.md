@@ -1,4 +1,26 @@
-# 🏆 HACKATHON CONTEXT: COLOSSEUM SOLANA RADAR 2026
+# 🏆 HACKATHON CONTEXT — Colosseum Crypto World's Fair 2026
+
+> ## ✅ Fakta terverifikasi (1 Okt 2026) — MENGGANTIKAN info di bawah bila bertentangan
+>
+> Diverifikasi dari *Official Rules* dan halaman resmi Colosseum; rincian + sumber di [`docs/RESEARCH.md`](RESEARCH.md) §1.
+>
+> - **Nama event:** Colosseum **Crypto World's Fair** (online, multi-chain). "Solana Radar" adalah hackathon 2024.
+> - **Deadline:** **23.59 PT, 12 Okt 2026 = 13 Okt 2026 13.59 WIB.** Setiap anggota tim wajib register di colosseum.com.
+> - **Hadiah:** Grand Champion $30k · 20 tim berikutnya $15k/tim · **University Award $5k** · **Public Goods Award $5k** ·
+>   **Solana track $100k (10 × $10k)** · akselerator $250k pre-seed. Tidak ada track "Consumer Apps".
+> - **Kriteria juri resmi (§8):** Functionality · Potential Impact (TAM) · Novelty · UX · Open-source/komposabilitas ·
+>   Business Plan. Bobot 60/30/10 di bawah **tidak resmi**.
+> - **Submission:** repo GitHub, **video pitch 2–3 menit** + **video demo ≤ 3 menit**, logo, latar belakang tim,
+>   rencana go-to-market & validasi demand. Hanya pekerjaan 14 Sep–12 Okt 2026 yang dinilai.
+> - **Juri:** tim Colosseum (Clay Robbins, Matty Taylor, Nate Levine, Max Monciardini, Michael Rinko) + 16 juri track
+>   (antara lain Phantom, Solana Foundation). Daftar juri di §3 di bawah belum terverifikasi untuk event ini.
+> - **Kompetitor baru:** DeathClock (Solana, entri event yang sama) memakai "ZK heartbeat" Groth16 yang **tetap
+>   menautkan wallet pemilik**. Klaim "first ZK heartbeat" tidak boleh dipakai; klaim yang benar ada di PITCH.md §4.
+
+---
+
+*Konteks asli (ditulis sebelum verifikasi):*
+
 
 Dokumen ini adalah **panduan konteks absolut** untuk AI Assistant / Claude Code yang melanjutkan pengerjaan proyek **SIKRIT**. Baca ini baik-baik sebelum menulis kode atau merancang presentasi.
 

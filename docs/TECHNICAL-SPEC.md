@@ -1,6 +1,6 @@
 # SIKRIT — Technical Specification (v0.1)
 
-> Spesifikasi teknis MVP untuk Solana Radar Hackathon. Fokus: **Privacy-Preserving Dead Man's Switch** di Solana.
+> Spesifikasi teknis MVP untuk Colosseum Crypto World's Fair 2026. Fokus: **Privacy-Preserving Dead Man's Switch** di Solana.
 
 ---
 

@@ -196,6 +196,7 @@ Semua di bawah budget default 200.000 CU per instruksi → tidak perlu instruksi
 | R12 | Kompatibilitas wallet | Derivasi kunci butuh `signMessage` dengan tanda tangan Ed25519 deterministik atas byte mentah. Wallet MPC dengan tanda tangan acak ditolak saat setup (SIK-15); Ledger yang hanya menandatangani format *off-chain message* Solana perlu dukungan terpisah. |
 | R13 | Ahli waris kehilangan wallet | Share ahli waris tidak bisa dibuka lagi. Jalan pemulihan: kuorum guardian yang cukup untuk k (mis. 3 guardian untuk k = 3) me-release ke kunci inbox baru, asalkan wallet `heir` on-chain masih bisa menandatangani sertifikat baru. |
 | R14 | Advisory npm transitif | `npm audit --omit=dev`: `toml` (via `@anchor-lang/core`) dan `uuid` (via `@solana/web3.js`). Jalur kodenya (parsing TOML workspace Anchor, `uuid` v3/v5 dengan buffer) tidak dipakai SDK/frontend; dicek ulang saat audit akhir (F6). |
+| R15 | Kolusi guardian tanpa ahli waris | Kit memakai Shamir k = kuorum + 1 atas n = 1 + jumlah guardian. Kalau jumlah guardian ≥ k (mis. 3 guardian, kuorum 2 → k = 3), **k guardian yang berkolusi bisa membuka rahasia tanpa ahli waris dan sebelum klaim on-chain**. Ini sifat bawaan skema threshold, dan sekaligus jalur pemulihan R13. Ahli waris sendirian atau kuorum guardian saja (< k) tidak bisa. Wizard menampilkan peringatan ini setiap kali jalur kolusi tersebut ada; pemilik yang tidak menginginkannya bisa memilih kuorum = semua guardian (k = jumlah guardian + 1, ahli waris selalu dibutuhkan, tapi R13 hilang). |
 
 ### Catatan kejujuran klaim (PITCH.md)
 

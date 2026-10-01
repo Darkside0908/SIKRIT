@@ -282,6 +282,13 @@ function CreateWizard({
             The key is split <span className="text-bone-50">{effectiveQuorum + 1}-of-{validGuardians.length + 1}</span>: your
             heir holds one share and each guardian one. Your heir alone learns <em>nothing</em>; after the claim,{" "}
             {effectiveQuorum} guardian{effectiveQuorum > 1 ? "s" : ""} must release their shares.
+            {validGuardians.length > effectiveQuorum && (
+              <span className="mt-2 block text-xs text-amber-glow">
+                Any {effectiveQuorum + 1} shares open it, so {effectiveQuorum + 1} guardians acting together could open it
+                without your heir. That is also how your heir recovers if they lose their wallet. To always require your
+                heir, set the quorum to all {validGuardians.length} guardians.
+              </span>
+            )}
           </p>
         </Step>
 

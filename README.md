@@ -2,9 +2,9 @@
 
 > **"Jangan bawa rahasiamu ke liang kubur — tapi jangan biarkan dunia tahu kamu masih di sini."**
 
-SIKRIT adalah protokol warisan digital pertama di mana **liveness si pemilik tidak bisa ditautkan ke identitasnya**. Pemilik membuktikan "masih hidup" lewat **Zero-Knowledge Proof** (Schnorr proof-of-knowledge) — tanpa membocorkan siapa pemiliknya atau wallet mana yang dipakai. Ketika pemilik tiada, kapsul rahasia (seed phrase / key / dokumen) dilepaskan ke ahli waris secara trustless.
+SIKRIT adalah dead man's switch di mana **bukti hidup si pemilik tidak bisa ditautkan ke wallet atau identitasnya** — sejauh riset kami (11 protokol warisan, [docs/RESEARCH.md](docs/RESEARCH.md)), yang pertama. Pemilik membuktikan "masih hidup" lewat **Zero-Knowledge Proof** (Schnorr proof-of-knowledge) — tanpa membocorkan siapa pemiliknya atau wallet mana yang dipakai. Ketika pemilik tiada, kapsul rahasia (seed phrase / key / dokumen) dilepaskan ke ahli waris secara trustless.
 
-**Solana Radar Hackathon 2026 — Track: Public Goods / Consumer Apps**
+**Colosseum Crypto World's Fair 2026 — Solana track · University Award · Public Goods Award**
 
 ---
 
@@ -15,8 +15,8 @@ SIKRIT adalah protokol warisan digital pertama di mana **liveness si pemilik tid
 | **Masalah** | >$100 miliar aset kripto mati permanen karena pemilik wafat tanpa menyerahkan akses |
 | **Tegangan** | Ahli waris harus bisa akses kalau kamu tiada — tapi JANGAN PERNAH bisa akses selama kamu hidup |
 | **Solusi** | Privacy-preserving dead man's switch di Solana (Shamir SSS + ZK proof-of-liveness + guardian network) |
-| **Differentiator** | Satu-satunya protokol di mana **heartbeat tidak bocor** (semua pesaing bocor liveness di-chain) |
-| **Ekonomi** | Heartbeat mingguan ~$0.0001; tanpa token spekulatif; fee dari release saja |
+| **Differentiator** | Heartbeat **tidak tertaut ke wallet pemilik** (tidak ada wallet pemilik di transaksi mana pun; waktu heartbeat tetap publik). Semua protokol lain yang kami periksa menautkannya, termasuk yang memakai ZK |
+| **Ekonomi** | Heartbeat 5.000 lamport (~$0,001) dan ~41k CU; tanpa token spekulatif |
 
 ---
 
@@ -24,7 +24,8 @@ SIKRIT adalah protokol warisan digital pertama di mana **liveness si pemilik tid
 
 - 📄 **[docs/PITCH.md](docs/PITCH.md)** — Narasi lengkap, competitive landscape, positioning, strategi menang.
 - 🔧 **[docs/TECHNICAL-SPEC.md](docs/TECHNICAL-SPEC.md)** — Arsitektur, instruksi Anchor, threat model, milestone.
-- 🛡️ **[docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md)** — Self-audit program: 11 temuan, perbaikan, protokol Fiat–Shamir final, risiko residual.
+- 🛡️ **[docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md)** — Self-audit: 15 temuan (program + SDK), perbaikan, protokol Fiat–Shamir final, risiko residual R1–R15.
+- 🔎 **[docs/RESEARCH.md](docs/RESEARCH.md)** — Fakta hackathon terverifikasi, kompetitor (11 proyek), angka pasar, sumber.
 
 ---
 

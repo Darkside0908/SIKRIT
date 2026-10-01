@@ -3,19 +3,19 @@
 Ini adalah panduan utama saat bekerja di repository **SIKRIT** menggunakan Claude Code / Cursor / CLI agents.
 
 ## 🚨 Hackathon Mission
-- **Event:** Colosseum Solana Radar Hackathon 2026
-- **Deadline:** 12 Oktober 2026 (~12 hari)
-- **Target Category:** Consumer Apps / Public Goods + **University Award ($10,000 USDC)**
+- **Event:** Colosseum **Crypto World's Fair** 2026 (bukan "Radar", itu 2024; lihat `docs/RESEARCH.md` §1)
+- **Deadline:** 12 Oktober 2026 23.59 PT (= 13 Okt 13.59 WIB)
+- **Target:** Solana track (10 × $10k) + **University Award ($5k)** + Public Goods Award ($5k) + top-20 ($15k)
 - **Author Profile:** Muhammad Ghani Nurramdhan (Mahasiswa Tk 4 Poltek SSN - Kriptografi & Cyber Security)
-- **Key Reference:** Baca `docs/HACKATHON-CONTEXT.md`, `docs/PITCH.md`, dan `docs/TECHNICAL-SPEC.md` sebelum mulai menulis kode.
+- **Key Reference:** Baca `docs/RESEARCH.md` (fakta event & kompetitor terverifikasi), `docs/PITCH.md`, `docs/TECHNICAL-SPEC.md` sebelum mulai menulis kode. `docs/HACKATHON-CONTEXT.md` berisi konteks awal — kotak "fakta terverifikasi" di atasnya menang bila bertentangan.
 
 ---
 
 ## 🎯 Core Architecture & Differentiator
 SIKRIT adalah **Privacy-Preserving Dead Man's Switch on Solana**.
 1. **Shamir's Secret Sharing (SSS) + ECIES:** Client-side split & encryption of seed phrases / credentials.
-2. **ZK Proof-of-Liveness (Schnorr Identification Protocol):** Mengirim heartbeat on-chain TANPA membocorkan metadata/identitas pemilik. Ini celah fatal dari kompetitor (Sarcophagus, Serenity, Deadhand).
-3. **Anchor Framework on Solana:** Biaya murah (~$0.0001 per heartbeat), non-custodial, zero token dependency.
+2. **ZK Proof-of-Liveness (Schnorr Identification Protocol):** Mengirim heartbeat on-chain TANPA menautkan wallet/identitas pemilik (waktu heartbeat tetap publik, R1). Tidak ada dari 11 kompetitor yang diperiksa (`docs/RESEARCH.md` §2, termasuk DeathClock yang juga pakai ZK) yang menyembunyikan identitas pemilik.
+3. **Anchor Framework on Solana:** Biaya murah (5.000 lamport ≈ $0,001 per heartbeat, ~41k CU), non-custodial, zero token dependency.
 
 ---
 
