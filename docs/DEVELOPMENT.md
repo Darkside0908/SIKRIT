@@ -60,7 +60,9 @@ Catatan build:
 
 ## Devnet
 
-Program ter-deploy di devnet sejak 1 Okt 2026: [`FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F`](https://explorer.solana.com/address/FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F?cluster=devnet)
+Program ter-deploy di devnet sejak 1 Okt 2026, di-upgrade ke protokol v2 pada 2 Okt 2026 (slot 506354888; byte on-chain =
+`target/deploy/sikrit.so`, sha256 `aa574a1d…`; IDL on-chain = `target/idl/sikrit.json`):
+[`FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F`](https://explorer.solana.com/address/FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F?cluster=devnet)
 (ProgramData `9W3hXq1MCz8ZKL7D9o3Do6xWb5aYUa3kNsK6TzUs42Jp`, ruang 480.000 byte untuk upgrade, upgrade authority
 `FNNYNGG688Y2wp2Nnb7K37ZsBTBF2HAFVFSxUh8iVd5N` — lihat R4 di security review). `solana config` global di mesin dev
 menunjuk mainnet-beta, jadi **selalu tulis `-u devnet`**.
@@ -84,9 +86,29 @@ cd app && npm run e2e:devnet
 ```
 
 `npm run e2e:devnet` mendanai relayer run itu 0,1 SOL dari `FUND_RELAYER_FROM` (default `~/.config/solana/id.json`)
-karena faucet publik devnet menolak top-up dari browser, lalu mengembalikan sisanya. RPC publik devnet membatasi
-`getProgramAccounts` dengan ketat: discovery guardian sengaja satu query per polling (bukan satu per slot), dan polling
-berhenti saat tab tersembunyi. Untuk demo publik yang ramai, build dengan `VITE_RPC_URL=<RPC khusus>`.
+karena faucet publik devnet menolak top-up dari browser, lalu mengembalikan sisanya. Sejak protokol v2 app tidak
+memakai `getProgramAccounts` sama sekali (heir/guardian mengenal kapsulnya dari kit; satu `getMultipleAccounts` per
+polling 15 s, berhenti saat tab tersembunyi), tapi RPC publik devnet tetap membatasi laju: untuk demo publik yang ramai,
+build dengan `VITE_RPC_URL=<RPC khusus>`.
+
+**Kalau upgrade gagal `Max retries exceeded`** (2 Okt 2026: RPC publik menjawab HTTP 429 "Too many requests from your
+IP"; `--use-rpc` menembakkan ~400 transaksi tulis sekaligus dan hanya 15 chunk masuk dalam 12 menit), tulis buffer
+dengan laju terkendali lalu upgrade dari buffer itu (~6 menit, ~0,002 SOL fee; rent buffer kembali saat upgrade):
+
+```bash
+solana-keygen new --no-bip39-passphrase --silent -o .keys/upgrade-buffer.json   # gitignored
+# buat buffer (kalau belum ada), isi chunk yang belum ada ±3 tx/detik, ulang sampai buffer = file byte per byte;
+# aman dijalankan ulang (atau beri alamat buffer yatim untuk melanjutkannya):
+(cd app && node scripts/write-buffer.mjs ../target/deploy/sikrit.so ../.keys/upgrade-buffer.json)
+solana program deploy -u devnet --keypair ~/.config/solana/id.json \
+  --program-id FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F --buffer .keys/upgrade-buffer.json
+# buffer yatim dari percobaan gagal (rent ~2 SOL masing-masing):
+solana program show -u devnet --buffers --keypair ~/.config/solana/id.json
+solana program close -u devnet --buffers --keypair ~/.config/solana/id.json
+```
+
+Jangan `pkill -f <pola>` untuk menghentikan proses ini: pola itu juga cocok dengan command line shell yang menjalankan
+`pkill` dan ikut membunuhnya. Pakai PID (`pgrep -f …` lalu `kill <pid>`).
 
 ## Relayer service (`app/api/relay.ts`)
 
@@ -113,8 +135,9 @@ halaman). Jangan mengeditnya saat E2E berjalan.
 
 | Instruksi | Compute units |
 |---|---|
-| `create_capsule` | ~68–74k (bergantung pencarian bump PDA) |
-| `heartbeat` | ~41k |
-| `trigger_claim` / `guardian_confirm` / `guardian_veto` / `claim` | ~7k |
+| `create_capsule` | ~68–72k (bergantung pencarian bump PDA) |
+| `heartbeat` | ~41,4k (verifikasi Schnorr + cek masa berlaku) |
+| `trigger_claim` / `guardian_veto` | ~7,6k |
+| `guardian_confirm` / `claim` | ~8–8,3k (membuka komitmen anggota: SHA-256 syscall) |
 
 Semua di bawah budget default 200k CU. Verifikasi yang sama dengan curve25519-dalek murni di SBF gagal (melebihi batas 1,4 jt CU / stack access violation) — detail di SIK-03.

@@ -1,7 +1,7 @@
 # SIKRIT — Security & Code Review (`programs/sikrit`)
 
 > **Scope:** `programs/sikrit/src/lib.rs` versi awal (draft v0.1), konfigurasi build (`Anchor.toml`, `Cargo.toml`), desain kriptografi Schnorr proof-of-liveness, dan (sejak 30 Sep malam) protokol custody share di SDK client (`sdk/hpke.ts`, `sdk/shamir.ts`, `sdk/kit.ts`) — lihat §5; frontend (§6), relayer service `app/api/relay.ts` (§7) dan protokol v2 (§9).
-> **Tanggal:** 30 September – 1 Oktober 2026 · **Metode:** review manual (kriptografi + keamanan smart contract), kompilasi SBF nyata, 12 unit test Rust, 73 test TypeScript (lifecycle di LiteSVM dengan time-travel, SDK, client, relayer), E2E Chrome melawan validator lokal dan devnet, dan benchmark compute unit.
+> **Tanggal:** 30 September – 2 Oktober 2026 · **Metode:** review manual (kriptografi + keamanan smart contract), kompilasi SBF nyata, 12 unit test Rust, 73 test TypeScript (lifecycle di LiteSVM dengan time-travel, SDK, client, relayer), E2E Chrome melawan validator lokal dan devnet, dan benchmark compute unit.
 > **Hasil:** 20 temuan — 3 Critical, 4 High, 5 Medium, 7 Low, 1 Info (desain). Sembilan belas sudah diperbaiki di kode; SIK-11 dimitigasi di client (urutan release tetap janji guardian, bukan paksaan kriptografis). SIK-16/17 berasal dari audit akhir frontend, SIK-18 dari E2E pertama melawan devnet (§6), SIK-19/20 dari review protokol setelah deploy (§9).
 
 ---
@@ -134,7 +134,7 @@ domain  = "SIKRIT:liveness:v1"            context = heartbeat_nonce (u64 LE)
 
 `claim` hanya mengubah status menjadi `Claimed`. Keamanan inti ("ahli waris **tidak boleh** bisa membuka selama pemilik hidup") sepenuhnya bergantung pada distribusi share off-chain. Jika ahli waris memegang ≥ k share sejak awal (mis. Share B dan Share C sama-sama dienkripsi ke pubkey ahli waris seperti tersirat di spec §3.1), ahli waris bisa merekonstruksi rahasia **kapan saja** dan dead man's switch tidak berarti.
 
-**Status (30 Sep):** dimitigasi di client lewat protokol custody §5 — ahli waris hanya memegang 1 share (< k), guardian me-release share mereka hanya setelah `Claimed` dan hanya ke kunci inbox yang disertifikasi wallet `heir` on-chain. Yang tetap berupa asumsi kepercayaan: kuorum guardian tidak berkolusi dengan ahli waris sebelum pemilik wafat.
+**Status (30 Sep):** dimitigasi di client lewat protokol custody §5 — ahli waris hanya memegang 1 share (< k), guardian me-release share mereka hanya setelah `Claimed` dan hanya ke kunci inbox yang disertifikasi wallet `heir` on-chain (sejak v2: wallet ahli waris yang dikomit, SIK-19). Yang tetap berupa asumsi kepercayaan: kuorum guardian tidak berkolusi dengan ahli waris sebelum pemilik wafat.
 
 **Rekomendasi awal (M2):** ahli waris hanya memegang < k share. Share sisanya dienkripsi ke masing-masing guardian, dan guardian menyerahkannya (re-encrypt ke ahli waris) **hanya setelah** status on-chain `Claimed`. Dengan begitu kepercayaan yang tersisa eksplisit: "≥ threshold guardian tidak berkolusi dengan ahli waris sebelum pemilik wafat". `share_hashes` on-chain dipakai ahli waris untuk memverifikasi integritas share yang diterima (sudah didemonstrasikan di test end-to-end). Alternatif lanjutan: jaringan threshold (mis. Lit Protocol) yang membaca status program.
 
@@ -185,7 +185,9 @@ stateDiagram-v2
 | `guardian_veto` | 7.558 |
 | `claim` (termasuk SHA-256 pembuka komitmen) | 8.287 |
 
-Semua di bawah budget default 200.000 CU per instruksi → tidak perlu instruksi ComputeBudget.
+Semua di bawah budget default 200.000 CU per instruksi → tidak perlu instruksi ComputeBudget. Di devnet (kapsul bukti v2
+`8q5t2g…TRKi`, 2 Okt 2026): `create_capsule` 68.731, `heartbeat` 41.444, `trigger_claim` 7.568, `guardian_confirm` 8.017,
+`claim` 8.289; fee 5.000 lamport per tanda tangan.
 
 ---
 
@@ -193,8 +195,8 @@ Semua di bawah budget default 200.000 CU per instruksi → tidak perlu instruksi
 
 | # | Risiko | Catatan / Mitigasi |
 |---|---|---|
-| R1 | Waktu heartbeat tetap publik | `last_heartbeat` dan timestamp transaksi terlihat oleh siapa pun yang tahu alamat kapsul (termasuk ahli waris & guardian). Yang disembunyikan adalah **siapa** (tidak ada tautan ke wallet), bukan **kapan**. Roadmap v2: bukti keanggotaan anonim (ring signature / Groth16) agar heartbeat tidak menunjuk kapsul tertentu. |
-| R2 | Tautan lewat fee payer | Jika wallet pemilik membayar `create_capsule`/`heartbeat`, transaksi itu menautkan wallet ke kapsul. Frontend harus memakai fee payer terpisah (burner/relayer). v2: relayer yang dibayar dari saldo kapsul. |
+| R1 | Waktu heartbeat tetap publik | `last_heartbeat` dan timestamp transaksi terlihat oleh siapa pun yang tahu alamat kapsul (termasuk ahli waris & guardian). Yang disembunyikan adalah **siapa** (tidak ada tautan ke wallet), bukan **kapan**. Roadmap v3: bukti keanggotaan anonim (ring signature / Groth16) agar heartbeat tidak menunjuk kapsul tertentu. |
+| R2 | Tautan lewat fee payer | Jika wallet pemilik membayar `create_capsule`/`heartbeat`, transaksi itu menautkan wallet ke kapsul. App selalu memakai relayer sebagai fee payer (service atau in-browser, §7); SDK tidak pernah meminta wallet pemilik menandatangani transaksi. Roadmap: relayer yang dibayar dari saldo kapsul. |
 | R3 | Roster tersegel, tapi tidak sepenuhnya tak terlihat | **Sejak v2 (SIK-19)** ahli waris & guardian hanya komitmen bergaram; wallet anggota baru muncul saat ia sendiri bertindak (guardian konfirmasi/veto, ahli waris klaim). Yang tetap publik: jumlah guardian, kuorum, interval, grace. File kit menyebut seluruh keluarga (wallet + salt), jadi kit hanya untuk para pemegang; kit yang bocor membuka roster (bukan rahasianya). Roadmap: kit "buta" yang menyimpan identitas di dalam amplop HPKE masing-masing pemegang. |
 | R4 | Upgrade authority | Program Solana dapat di-upgrade oleh deployer. Di devnet (deploy 1 Okt 2026) authority = satu hot key `FNNYNGG688Y2wp2Nnb7K37ZsBTBF2HAFVFSxUh8iVd5N`. Upgrade jahat (atau kunci bocor) bisa melonggarkan timer → ahli waris mengklaim lebih awal → guardian me-release; rahasia tetap butuh share ahli waris + kuorum guardian, tetapi gerbang "pemilik diam" hilang. Untuk mainnet: authority ke multisig (Squads) dengan timelock, build terverifikasi (`solana-verify`), lalu immutable setelah audit eksternal. |
 | R5 | Penundaan oleh guardian jahat | Terbatas `jumlah_guardian × (interval + grace)`. Jika ingin lebih ketat: veto butuh threshold guardian. |
@@ -205,7 +207,7 @@ Semua di bawah budget default 200.000 CU per instruksi → tidak perlu instruksi
 | R10 | Bukan post-quantum | X25519 (HPKE) dan Ed25519 tidak tahan komputer kuantum. Kit sengaja tidak ditaruh di storage publik permanen (hanya hash yang on-chain) sehingga tidak bisa di-*harvest now, decrypt later* secara massal. Roadmap: KEM hibrida X-Wing (ML-KEM-768 + X25519) begitu HPKE-nya terstandar; format kit sudah berversi. |
 | R11 | Side channel JavaScript | JS (JIT + GC) tidak menjamin constant-time; aritmetika GF(2^8) library Shamir memakai tabel lookup. Operasi dilakukan sekali di device pengguna; penyerang lokal yang bisa mengukur cache di device itu di luar model ancaman. |
 | R12 | Kompatibilitas wallet | Derivasi kunci butuh `signMessage` dengan tanda tangan Ed25519 deterministik atas byte mentah. Wallet MPC dengan tanda tangan acak ditolak saat setup (SIK-15); Ledger yang hanya menandatangani format *off-chain message* Solana perlu dukungan terpisah. |
-| R13 | Ahli waris kehilangan wallet | Share ahli waris tidak bisa dibuka lagi. Jalan pemulihan: kuorum guardian yang cukup untuk k (mis. 3 guardian untuk k = 3) me-release ke kunci inbox baru, asalkan wallet `heir` on-chain masih bisa menandatangani sertifikat baru. |
+| R13 | Ahli waris kehilangan wallet | Tanpa wallet itu ahli waris tidak bisa membuka share-nya (kunci inbox diturunkan dari tanda tangannya) dan, sejak v2, tidak bisa `claim` (klaim membuka komitmen dengan tanda tangan wallet yang dikomit), jadi jalur on-chain berhenti di `ClaimPending`. Selama pemilik hidup: buat kapsul baru untuk wallet baru. Setelahnya, satu-satunya jalan adalah k guardian (mis. 3 guardian untuk k = 3) membuka share masing-masing dan merekonstruksi bersama (`openShare` + `recoverSecret` di SDK, belum ada di UI), yaitu jalur kolusi R15 yang dipakai dengan sengaja. Kalau yang hilang hanya file kit, wallet yang sama menurunkan ulang kunci inbox, dan salinan kit (beserta salt) ada di tiap guardian. |
 | R14 | Advisory npm transitif | Dicek ulang 1 Okt 2026 (`npm audit --omit=dev`). Root: `toml` ≤ 4.1.2 (via `@anchor-lang/core`, hanya dipakai test suite untuk membaca workspace Anchor; tidak masuk app) dan `uuid` < 11.1.1. App: 10 *moderate*, semuanya rantai `uuid` lewat `@solana/web3.js` (`jayson` → uuid 8, `rpc-websockets` → uuid 14) dan wallet adapter yang bergantung padanya. Advisory uuid (GHSA-w5hq-g745-h8pq) hanya terpicu bila argumen `buf` diberikan ke v3/v5/v6; kedua pemanggil hanya membuat ID request/socket tanpa `buf`. Tidak ada perbaikan non-breaking; dipantau. |
 | R15 | Kolusi guardian tanpa ahli waris | Kit memakai Shamir k = kuorum + 1 atas n = 1 + jumlah guardian. Kalau jumlah guardian ≥ k (mis. 3 guardian, kuorum 2 → k = 3), **k guardian yang berkolusi bisa membuka rahasia tanpa ahli waris dan sebelum klaim on-chain**. Ini sifat bawaan skema threshold, dan sekaligus jalur pemulihan R13. Ahli waris sendirian atau kuorum guardian saja (< k) tidak bisa. Wizard menampilkan peringatan ini setiap kali jalur kolusi tersebut ada; pemilik yang tidak menginginkannya bisa memilih kuorum = semua guardian (k = jumlah guardian + 1, ahli waris selalu dibutuhkan, tapi R13 hilang). |
 | R16 | Kunci demo di localStorage | Mode demo menyimpan keypair persona dan relayer di `localStorage` browser (hot key, terbaca oleh script apa pun di origin itu). Hanya untuk devnet/localnet dan dilabeli demo di UI; CSP produksi (`script-src 'self'`) membatasi XSS. Wallet sungguhan tidak pernah menyimpan kunci di app: kunci liveness & inbox hanya di memori, diturunkan ulang dari tanda tangan. |
@@ -426,6 +428,8 @@ bahasa baru (Rust).
 
 ### Dampak upgrade
 
+- Devnet di-upgrade 2 Okt 2026 (slot 506354888) dengan program ID dan ProgramData yang sama: byte on-chain = build
+  lokal (sha256 `aa574a1d…`), IDL on-chain = IDL lokal, dan E2E browser melawan devnet lulus setelahnya (§8).
 - Layout akun berubah (605 → 637 byte). Kapsul v1 di devnet (hanya data uji E2E) tidak bisa dibaca program v2;
   `decodeCapsule` menolaknya dengan pesan "older protocol version" dan app menampilkannya, bukan memuat selamanya.
 - Kit v1 ditolak `decodeKit` (versi 2 wajib); domain kit lain (`payload`, `share`, `release`, `share-hash`, `inbox`)

@@ -49,18 +49,21 @@ Lunak Kripto) yang belajar kriptografi terapan untuk negara, dan ingin keluargan
 1. **Seal.** Rahasia (seed phrase, password, pesan) dienkripsi di browser dengan kunci acak sekali pakai. Kunci itu
    dipecah dengan **Shamir's Secret Sharing**: satu share untuk ahli waris, satu per guardian. Tiap share dienkripsi
    (**HPKE, RFC 9180**) ke kunci inbox yang **ditandatangani wallet pemegangnya**, sehingga tidak ada kunci yang bisa
-   diselundupkan di tengah jalan. On-chain hanya disimpan **hash** tiap share.
+   diselundupkan di tengah jalan. On-chain hanya disimpan **hash** tiap share dan, untuk ahli waris serta tiap
+   guardian, **komitmen bergaram** `SHA-256(domain ‖ P ‖ peran ‖ wallet ‖ salt)`: chain tidak tahu siapa keluarganya.
 2. **Prove you're alive.** Pemilik mengirim **bukti Schnorr zero-knowledge** bahwa ia masih memegang kunci liveness
    `x` (yang diturunkan dari tanda tangan wallet, tapi bukan kunci wallet). Bukti diverifikasi on-chain (~41k CU),
-   terikat ke counter (setiap bukti hanya berlaku sekali), dan **dikirim oleh relayer**: **tidak ada wallet pemilik di
-   transaksi mana pun**.
+   terikat ke counter (setiap bukti hanya berlaku sekali) dan ke masa berlaku 10 menit (relayer yang menahannya tidak
+   bisa memakainya belakangan), dan **dikirim oleh relayer**: **tidak ada wallet pemilik di transaksi mana pun**.
 3. **Release on silence.** Kalau pemilik diam melewati interval, siapa pun boleh membuka klaim. Heartbeat tetap bisa
-   membatalkannya; guardian bisa veto alarm palsu (terbatas, anti-DoS). Setelah grace period dan kuorum guardian
-   mengonfirmasi, ahli waris klaim. **Baru setelah itu** guardian me-release share-nya ke inbox ahli waris, dan
-   rahasia tersusun kembali **di browser ahli waris**.
+   membatalkannya; guardian bisa veto alarm palsu (terbatas, anti-DoS). Guardian mengonfirmasi dengan membuka
+   komitmennya (salt dari kit + tanda tangan wallet-nya); setelah grace period dan kuorum, ahli waris klaim dengan cara
+   yang sama. **Baru setelah itu** guardian me-release share-nya ke inbox ahli waris yang dikomit, dan rahasia tersusun
+   kembali **di browser ahli waris**.
 
 Ahli waris sendirian memegang share yang secara statistik independen dari rahasia: ia tidak bisa membuka apa pun
-sebelum waktunya.
+sebelum waktunya. Dan karena keluarga hanya ada sebagai komitmen, penjahat yang tahu wallet anak pemilik tidak bisa
+memakainya untuk menemukan kapsul si pemilik: tiap anggota baru terlihat on-chain saat **ia sendiri** bertindak.
 
 ## 4. Kompetitor
 
@@ -78,7 +81,9 @@ sebelum waktunya.
 | **SIKRIT** | **Solana** | **rahasia apa pun** (seed lintas chain) | **Tidak**: bukti tanpa identitas, dikirim relayer |
 
 **Klaim yang boleh dipakai:** *"Of the 11 inheritance protocols we reviewed, none hides who is checking in. SIKRIT is,
-to our knowledge, the first dead man's switch whose proof of life cannot be linked to the owner's wallet."*
+to our knowledge, the first dead man's switch whose proof of life cannot be linked to the owner's wallet."* Ditambah
+(properti SIKRIT sendiri, tanpa perbandingan): *"While you're alive, the chain holds no wallet of your family either:
+heir and guardians are salted commitments until they act."*
 
 **Jangan klaim:** "ZK heartbeat pertama di Solana" (DeathClock sudah memakai Groth16), "satu-satunya aplikasi warisan
 kripto", atau bahwa waktu heartbeat tersembunyi (tidak).
@@ -88,10 +93,11 @@ kripto", atau bahwa waktu heartbeat tersembunyi (tidak).
 | Klaim | Bukti di repo |
 |---|---|
 | Heartbeat tanpa wallet pemilik | E2E Chrome (`app/e2e/demo-flow.mjs`) membaca ulang **semua 6 transaksi kapsul** di chain: wallet pemilik muncul di **0** |
-| Murah | Verifikasi heartbeat **41.012 CU**; fee 5.000 lamport. Heartbeat mingguan 30 tahun ≈ **0,0078 SOL** |
+| Keluarga tidak on-chain sebelum bertindak | E2E yang sama: Sari (ahli waris) hanya muncul di transaksi klaimnya, Budi & Dewi hanya di konfirmasi masing-masing, Rizal (guardian yang tidak bertindak) di **0**; akun kapsul hanya memuat komitmen sampai klaim |
+| Murah | Verifikasi heartbeat **41.444 CU** (diukur di devnet, termasuk cek masa berlaku); fee 5.000 lamport. Heartbeat mingguan 30 tahun ≈ **0,0078 SOL** |
 | Kriptografi benar | Transkrip Fiat–Shamir dikunci *known-answer vector* lintas bahasa (TS ↔ Rust); HPKE lolos vektor resmi RFC 9180; Shamir pakai library teraudit (Cure53 + Zellic) |
-| Aman | Self-audit 18 temuan (`docs/SECURITY-REVIEW.md`, program + SDK + app): replay, double-vote guardian, veto DoS, swap kunci inbox, dst. — semua High/Critical sudah diperbaiki dan dites |
-| Bekerja end-to-end | 68 test (LiteSVM + SDK + client + relayer) + 10 unit test Rust + E2E browser 12 langkah, di validator lokal **dan di devnet**: seed phrase pulih identik di browser ahli waris |
+| Aman | Self-audit 20 temuan (`docs/SECURITY-REVIEW.md`, program + SDK + app + relayer): replay, double-vote guardian, veto DoS, swap kunci inbox, roster keluarga yang menunjuk ke pemilik, bukti heartbeat tanpa masa berlaku, dst. — semua High/Critical sudah diperbaiki dan dites |
+| Bekerja end-to-end | 73 test (LiteSVM + SDK + client + relayer) + 12 unit test Rust + E2E browser 12 langkah, di validator lokal **dan di devnet**: seed phrase pulih identik di browser ahli waris |
 
 ## 6. Bisnis & go-to-market *(rencana; belum ada pendapatan)*
 
@@ -105,7 +111,7 @@ sekitarnya, bukan dari spekulasi.
    membatalkan, R8), relayer dengan SLA. Heartbeat tetap bisa dikirim siapa pun, jadi tidak ada lock-in.
 3. **Guardian profesional.** Notaris dan perencana waris sebagai guardian. Cocok dengan praktik **akta wasiat** di
    Indonesia: notaris bisa ikut mengonfirmasi klaim tanpa pernah bisa membuka rahasia sendirian.
-4. **Biaya release opsional** di program (v2), dibayar sekali saat warisan benar-benar terjadi.
+4. **Biaya release opsional** di program (versi berikutnya), dibayar sekali saat warisan benar-benar terjadi.
 
 **Go-to-market:** mulai dari Indonesia (22,93 juta investor, budaya waris keluarga yang kuat, komunitas Solana lokal),
 lewat komunitas kripto, kampus, dan notaris/perencana keuangan. Setelah itu pengguna self-custody global lewat wallet.
@@ -116,9 +122,9 @@ lewat komunitas kripto, kampus, dan notaris/perencana keuangan. Setelah itu peng
 
 | Kriteria (Rules §8) | Jawaban SIKRIT |
 |---|---|
-| **Functionality** | Program Anchor live di devnet + SDK + app berjalan end-to-end; 68 test + E2E browser (localnet & devnet); kode diaudit sendiri dengan temuan terdokumentasi |
+| **Functionality** | Program Anchor live di devnet + SDK + app berjalan end-to-end; 73 test + 12 unit test Rust + E2E browser (localnet & devnet); kode diaudit sendiri dengan temuan terdokumentasi |
 | **Potential Impact** | Jutaan BTC terkunci permanen; setiap pengguna self-custody butuh rencana waris; primitive privasi yang bisa dipakai ulang (*proof of liveness* tanpa identitas) |
-| **Novelty** | Heartbeat tanpa identitas: tidak ada di 11 proyek yang kami periksa. Bukti Schnorr diverifikasi dengan syscall curve25519 dalam 41k CU |
+| **Novelty** | Heartbeat tanpa identitas: tidak ada di 11 proyek yang kami periksa. Bukti Schnorr diverifikasi dengan syscall curve25519 dalam 41k CU. Roster tersegel melengkapinya (Ethernal juga menyegel ahli waris, tapi pemiliknya tetap terlihat): pemilik **dan** keluarganya tidak terlihat sampai bertindak |
 | **UX** | Tanpa token, tanpa KYC, tanpa hardware khusus. Pemilik tidak perlu SOL dan tidak perlu backup kunci baru (diturunkan ulang dari wallet). Setup ±2 menit |
 | **Open-source** | Seluruh repo terbuka; SDK tanpa Anchor di browser; heartbeat signer-less sehingga siapa pun bisa membangun relayer/watcher; format kit berversi |
 | **Business Plan** | Open core: integrasi wallet, watcher/relayer premium, guardian profesional (notaris) |
@@ -128,7 +134,7 @@ lewat komunitas kripto, kampus, dan notaris/perencana keuangan. Setelah itu peng
 - **"Is a Schnorr proof really zero-knowledge?"** Ya, dalam arti standar: Schnorr adalah *honest-verifier* ZK proof of
   knowledge, dibuat non-interaktif dengan Fiat–Shamir (random oracle). Secara matematis setara tanda tangan Schnorr
   dengan kunci khusus. Kekuatannya ada pada **unlinkability + anti-replay + domain separation**, bukan pada SNARK.
-- **"Is the heartbeat time hidden?"** Tidak. *Siapa* yang tersembunyi, *kapan* tetap publik (R1). Roadmap v2: himpunan
+- **"Is the heartbeat time hidden?"** Tidak. *Siapa* yang tersembunyi, *kapan* tetap publik (R1). Roadmap v3: himpunan
   anonim (ring signature / bukti keanggotaan) supaya heartbeat tidak menunjuk kapsul tertentu.
 - **"Can guardians collude early?"** Ya, kalau cukup banyak: rahasia terbuka dengan **k = kuorum + 1** share, yaitu
   ahli waris + kuorum guardian, **atau** k guardian tanpa ahli waris (kalau jumlah guardian ≥ k). Ini asumsi
@@ -140,7 +146,13 @@ lewat komunitas kripto, kampus, dan notaris/perencana keuangan. Setelah itu peng
   terbuka ke ahli waris setelah interval + grace. Gagalnya ke arah yang aman untuk keluarga; pemilik bisa membuat
   kapsul baru.
 - **"Isn't the relayer a central point?"** Heartbeat tidak butuh signer: siapa pun bisa me-relay, relayer tidak bisa
-  memalsukan bukti, dan pemilik bisa memakai fee payer mana pun (asal bukan wallet-nya sendiri).
+  memalsukan bukti, dan pemilik bisa memakai fee payer mana pun (asal bukan wallet-nya sendiri). Relayer yang menahan
+  bukti juga tidak bisa menyimpannya untuk nanti: bukti kedaluwarsa dalam 10 menit (batas program 1 jam, SIK-20).
+- **"Can someone find my capsule through my children's wallets?"** Tidak sejak protokol v2 (SIK-19). Chain hanya
+  menyimpan komitmen bergaram atas ahli waris dan guardian; salt 256 bit ada di kit, jadi komitmen tidak bisa ditebak
+  dengan mencoba wallet, dan orang yang sama tidak tertaut antar kapsul. Anggota terlihat hanya saat bertindak
+  (guardian konfirmasi/veto, ahli waris klaim). Yang tetap publik: jumlah guardian, kuorum, timer (R3). File kit
+  menyebut seluruh keluarga, jadi kit hanya untuk para pemegangnya.
 - **"Upgrade authority?"** Untuk produksi dipindah ke multisig atau dibuat immutable setelah audit (R4).
 - **"Why Solana?"** Syscall curve25519 membuat verifikasi Schnorr murah (41k CU), fee per heartbeat 5.000 lamport, dan
   PDA bisa diturunkan dari kunci publik `P`, bukan dari wallet. Di chain dengan gas mahal, heartbeat mingguan
@@ -148,10 +160,13 @@ lewat komunitas kripto, kampus, dan notaris/perencana keuangan. Setelah itu peng
 
 ## 9. Roadmap
 
-- **v1.1 (pasca-hackathon):** watcher notifikasi, pengikatan origin pada pesan derivasi kunci (R9), dukungan Ledger
+- **Sudah (protokol v2, live di devnet sejak 2 Okt):** heir/guardian sebagai komitmen bergaram (SIK-19), bukti
+  heartbeat berumur pendek (SIK-20).
+- **v2.1 (pasca-hackathon):** watcher notifikasi, pengikatan origin pada pesan derivasi kunci (R9), dukungan Ledger
   (R12), instruksi `close` (R7), deploy mainnet setelah audit eksternal.
-- **v2:** heartbeat dalam himpunan anonim (R1), heir/guardian sebagai komitmen hash (R3), KEM hibrida post-quantum
-  X-Wing (R10), migrasi Anchor 1.x / SBPF v3 (R6), opsional NFT "surat wasiat" yang bisa dipindah.
+- **v3:** heartbeat dalam himpunan anonim (R1), kit "buta" yang menyimpan identitas keluarga di dalam amplop HPKE
+  tiap pemegang (R3), KEM hibrida post-quantum X-Wing (R10), migrasi Anchor 1.x / SBPF v3 (R6), opsional NFT "surat
+  wasiat" yang bisa dipindah.
 
 ## 10. Demo story (30 detik)
 

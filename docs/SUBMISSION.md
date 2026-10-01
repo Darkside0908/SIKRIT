@@ -21,8 +21,8 @@ Alternative (≤ 60 chars): *Private proof-of-life inheritance for self-custody.
 
 > SIKRIT lets self-custody users pass on a seed phrase or any secret to their family without trusting a custodian and
 > without broadcasting their life signs. The owner checks in with a Schnorr zero-knowledge proof from a key that is not
-> their wallet, sent by a relayer. If they fall silent, guardians confirm the claim and the secret reassembles only in
-> the heir's browser.
+> their wallet, sent by a relayer, and the family exists on-chain only as salted commitments. If the owner falls
+> silent, guardians confirm the claim and the secret reassembles only in the heir's browser.
 
 ## 4. Full description (≈ 300 words)
 
@@ -37,12 +37,13 @@ Alternative (≤ 60 chars): *Private proof-of-life inheritance for self-custody.
 > **Solution.** SIKRIT separates *proof of life* from *identity*:
 > 1. **Seal.** The secret is encrypted in the browser under a random key. The key is split with Shamir's scheme: one
 >    share for the heir, one per guardian, each sealed with HPKE (RFC 9180) to an inbox key its holder's wallet
->    signed. Only share hashes go on-chain.
+>    signed. On-chain go only share hashes and a salted commitment per family member: the heir and guardians appear
+>    only when they act.
 > 2. **Prove.** The owner proves knowledge of a dedicated liveness key with a Schnorr proof (Fiat–Shamir, domain-
->    separated, bound to a counter so each proof works once). The Anchor program verifies it with Solana's curve25519
->    syscalls in ~41k CU. The capsule address derives from the proof key, not a wallet, and any relayer can submit
->    the proof. Our end-to-end test replays a full inheritance on Solana devnet and finds the owner's wallet in 0 of 6
->    transactions.
+>    separated, bound to a counter and a ten-minute expiry, so each proof works once and cannot be held back). The
+>    Anchor program verifies it with Solana's curve25519 syscalls in ~41k CU. The capsule address derives from the
+>    proof key, not a wallet, and any relayer can submit the proof. Our end-to-end test replays a full inheritance on
+>    Solana devnet and finds the owner's wallet in 0 of 6 transactions, and each family member only where they act.
 > 3. **Release.** After a missed interval anyone can open a claim; a heartbeat cancels it and guardians can veto a
 >    false alarm. After the grace period and a guardian quorum, the heir claims, guardians release their shares to
 >    the heir's certified inbox, and the secret reassembles in the heir's browser.
@@ -50,8 +51,9 @@ Alternative (≤ 60 chars): *Private proof-of-life inheritance for self-custody.
 > **Why Solana.** Cheap curve25519 syscalls and PDAs keyed by a public key make a private heartbeat practical: 30 years
 > of weekly check-ins cost about 0.0078 SOL. No token.
 >
-> **Honest limits.** Heartbeat times and heir/guardian addresses are public; enough colluding guardians could open a
-> kit early; not post-quantum yet. All documented in our security review with a roadmap.
+> **Honest limits.** Heartbeat times are public, and each family member becomes visible when they act; enough
+> colluding guardians could open a kit early; not post-quantum yet. All documented in our security review with a
+> roadmap.
 
 ## 5. Blockchains & tools integrated
 
@@ -86,7 +88,7 @@ the form asks⟩.
 | GitHub repository | ⟨`https://github.com/⟨username⟩/SIKRIT`⟩ — public, MIT |
 | Live demo | ⟨Vercel URL⟩ — devnet; fees paid by the relayer service, so visitors need no wallet and no test SOL · local demo: `cd app && npm run localnet` |
 | Program (devnet) | [`FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F`](https://explorer.solana.com/address/FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F?cluster=devnet) |
-| A full inheritance on devnet | capsule [`5RR3sGRBZwdXAV6SMLFUzzGksMzuigmaLMEMNVCxjX9i`](https://explorer.solana.com/address/5RR3sGRBZwdXAV6SMLFUzzGksMzuigmaLMEMNVCxjX9i?cluster=devnet): 6 transactions (create → heartbeat → trigger → 2 confirms → claim); its owner's wallet `BvmZmRgnuy6y8tWdTbRPdPDC5jsFfhEm3cMsEnkxTBSW` has never been on-chain |
+| A full inheritance on devnet (protocol v2) | capsule [`8q5t2gBnPHhNfqZhr6FqKU5WZZg3cNSYgMLSoeksTRKi`](https://explorer.solana.com/address/8q5t2gBnPHhNfqZhr6FqKU5WZZg3cNSYgMLSoeksTRKi?cluster=devnet): 6 transactions (create → heartbeat → trigger → 2 confirms → claim), all paid by the relayer; its owner's wallet `6Y9jCPnz5yUnE1KiNLYosJ5ye793RnxLkQERaUDpVfWg` has never been on-chain; the heir signs only her claim and each guardian only their own confirmation |
 | Presentation video (2–3 min) | ⟨YouTube/Loom link⟩ — script: `docs/VIDEO-SCRIPT.md` §1 |
 | Product demo video (≤ 3 min) | ⟨YouTube/Loom link⟩ — script: `docs/VIDEO-SCRIPT.md` §2 |
 | Pitch deck (PDF) | `docs/deck/SIKRIT-deck.pdf` (source `docs/deck/index.html`) |
@@ -157,7 +159,7 @@ Results — fill in with real answers only:
 
 - [ ] Registered on colosseum.com for **Crypto World's Fair** (every team member)
 - [ ] Repo pushed and **public**; README renders; `LICENSE` present
-- [x] Program deployed to devnet; program ID + explorer link in README (`docs/` mentions updated) — done 1 Oct by the loop
+- [x] Program deployed to devnet; program ID + explorer link in README (`docs/` mentions updated) — done 1 Oct by the loop; upgraded to protocol v2 on 2 Oct (same program ID)
 - [ ] Live demo URL works (Vercel, with `RELAYER_SECRET_KEY` set — see PROGRESS.md "BUTUH BANG IGAN"): create a capsule as Pak Arif without any wallet
 - [ ] Pitch video (≤ 3:00) and demo video (≤ 3:00) uploaded (unlisted is fine); links pasted above and in the form
 - [ ] Deck PDF regenerated if anything changed (`cd app && npm run deck`)

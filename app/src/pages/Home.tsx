@@ -58,9 +58,9 @@ export function Home() {
             </div>
             <dl className="space-y-3 text-sm">
               <Row label="Owner" value={<span className="redact w-32" />} />
-              <Row label="Heir" value={<span className="mono text-bone-200">Fs3k…9hQe</span>} />
-              <Row label="Guardians" value={<span className="text-bone-200">2 of 3 must confirm</span>} />
-              <Row label="Last proof" value={<span className="mono text-verdigris-300">heartbeat(R, s) ✓</span>} />
+              <Row label="Heir" value={<span className="text-bone-200">sealed until the claim</span>} />
+              <Row label="Guardians" value={<span className="text-bone-200">3 sealed · 2 must confirm</span>} />
+              <Row label="Last proof" value={<span className="mono text-verdigris-300">heartbeat(R, s, expiry) ✓</span>} />
               <Row label="Signed by owner" value={<span className="stamp border-verdigris-400 text-verdigris-300">never</span>} />
             </dl>
             <Ecg vital="alive" />
@@ -118,7 +118,7 @@ export function Home() {
           </div>
           <div className="card space-y-4 border-verdigris-500/30 p-6">
             <div className="text-sm font-semibold text-verdigris-300">A SIKRIT heartbeat</div>
-            <pre className="mono overflow-x-auto rounded-lg border border-ink-700 bg-ink-950/60 p-4 leading-relaxed text-bone-200">{`heartbeat(R, s)
+            <pre className="mono overflow-x-auto rounded-lg border border-ink-700 bg-ink-950/60 p-4 leading-relaxed text-bone-200">{`heartbeat(R, s, expiry)
   signer:   relayer (fee payer only)
   account:  PDA("capsule", P)   ← P = x·G, not a wallet
   → "whoever knows x is alive"`}</pre>

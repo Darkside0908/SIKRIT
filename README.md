@@ -49,12 +49,12 @@ the owner's family either: each member shows up only in the transaction where th
 full inheritance in Chrome, on a local validator and on Solana devnet, then re-reads every capsule transaction:
 **the owner's wallet appears in 0 of 6**, the heir only in her claim, each confirming guardian only in their own
 confirmation, and the guardian who never acted in none. Check one devnet run yourself: capsule
-[`5RR3sG…xjX9i`](https://explorer.solana.com/address/5RR3sGRBZwdXAV6SMLFUzzGksMzuigmaLMEMNVCxjX9i?cluster=devnet)
+[`8q5t2g…TRKi`](https://explorer.solana.com/address/8q5t2gBnPHhNfqZhr6FqKU5WZZg3cNSYgMLSoeksTRKi?cluster=devnet)
 went from creation to a completed claim, and its owner's wallet
-[`BvmZmR…TBSW`](https://explorer.solana.com/address/BvmZmRgnuy6y8tWdTbRPdPDC5jsFfhEm3cMsEnkxTBSW?cluster=devnet)
+[`6Y9jCP…VfWg`](https://explorer.solana.com/address/6Y9jCPnz5yUnE1KiNLYosJ5ye793RnxLkQERaUDpVfWg?cluster=devnet)
 (a demo persona) has never touched the chain at all.
 
-<p align="center"><img src="docs/screenshots/inspector.webp" alt="What the chain sees: relayer, capsule and program accounts, 72 bytes of proof data; the owner's wallet is stamped NOT PRESENT" width="92%" /></p>
+<p align="center"><img src="docs/screenshots/inspector.webp" alt="What the chain sees: relayer, capsule and program accounts, 80 bytes of proof data (R, s and the proof's expiry); the owner's wallet and every family wallet are stamped NOT PRESENT" width="92%" /></p>
 
 ## How it works
 
@@ -97,7 +97,7 @@ stateDiagram-v2
 
 | | |
 |---|---|
-| Heartbeat verification | **~41.4k CU** (curve25519 syscalls; a pure-Rust verifier exceeded 1.4 M CU) |
+| Heartbeat verification | **41,444 CU** on devnet, expiry check included (curve25519 syscalls; a pure-Rust verifier exceeded 1.4 M CU) |
 | `create_capsule` / other instructions | ~70k CU / ~7.5–8.3k CU |
 | Cost of a heartbeat | 5,000 lamports. 30 years of weekly heartbeats ≈ **0.0078 SOL**. No token |
 | Owner wallets in capsule transactions | **0 of 6**, checked on-chain by the E2E test |
@@ -171,7 +171,7 @@ What is public by design, and stated in the pitch:
 - [x] Demo app (create → heartbeat → claim → guardian release → recovery), browser E2E
 - [x] Static hosting ready (GitHub Pages workflow, `app/vercel.json`)
 - [x] Protocol v2: sealed heir/guardian roster, heartbeat proofs that expire within the hour
-- [x] Program live on devnet: [`FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F`](https://explorer.solana.com/address/FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F?cluster=devnet)
+- [x] Program live on devnet, protocol v2 since 2 Oct 2026: [`FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F`](https://explorer.solana.com/address/FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F?cluster=devnet)
   (deployed bytes identical to `anchor build`; the full demo story passes against it with `cd app && npm run e2e:devnet`)
 - [ ] Live demo URL ⟨…⟩
 

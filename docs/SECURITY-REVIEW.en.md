@@ -5,7 +5,7 @@
 >
 > **Scope:** the Anchor program (`programs/sikrit`), the client SDK (`sdk/`: Schnorr prover, HPKE, Shamir, capsule
 > kit, program client), the demo app (`app/`) and its relayer service (`app/api/relay.ts`).
-> **Dates:** 30 Sep – 1 Oct 2026. **Method:** manual review (cryptography and smart-contract security), real SBF
+> **Dates:** 30 Sep – 2 Oct 2026. **Method:** manual review (cryptography and smart-contract security), real SBF
 > builds, 73 TypeScript tests (the lifecycle and relayer tests run the real SBF binary in LiteSVM with a
 > time-travelling clock), 12 Rust unit tests, a 12-step browser end-to-end run on a local validator and on devnet, and
 > compute-unit benchmarks.
@@ -93,6 +93,8 @@ field of a member commitment has a fixed length. The Schnorr format is pinned ac
 vector shared by the TypeScript prover tests and the Rust verifier tests; member commitments have their own vector,
 recomputed with Python `hashlib`. The 256-bit salt makes a commitment hiding against a guess over every Solana wallet,
 SHA-256 makes it binding to one wallet, and P plus a per-capsule salt keep the same person unlinkable across capsules.
+Protocol v2 went live on devnet on 2 Oct 2026 as an upgrade of the same program ID (deployed bytes identical to the
+local build, on-chain IDL updated); v1 capsules from earlier test runs are rejected by the client as an older version.
 
 ```mermaid
 stateDiagram-v2
@@ -108,7 +110,8 @@ stateDiagram-v2
 
 Compute units, real SBF binary (LiteSVM, max observed, v2): `create_capsule` ~66–74k (varies with the PDA bump
 search), `heartbeat` 41,447 (including the expiry check), `trigger_claim` / `guardian_veto` ~7.6k,
-`guardian_confirm` / `claim` ~8–8.3k (including the SHA-256 opening). All fit the default 200k budget.
+`guardian_confirm` / `claim` ~8–8.3k (including the SHA-256 opening). All fit the default 200k budget. On devnet (v2
+proof capsule `8q5t2g…TRKi`, 2 Oct 2026) the heartbeat took 41,444 CU and 5,000 lamports.
 
 ## 3. Share custody in the client (SDK)
 
@@ -160,7 +163,7 @@ relayed inheritance in which the heir and the guardian hold no SOL at all.
 | R10 | Not post-quantum | X25519 and Ed25519. Kits are not stored on public permanent storage (only hashes on-chain), limiting harvest-now-decrypt-later. Roadmap: X-Wing hybrid KEM; the kit format is versioned. |
 | R11 | JavaScript side channels | JS gives no constant-time guarantees; the Shamir library uses table lookups. Operations run once, on the user's device. |
 | R12 | Wallet compatibility | Requires `signMessage` with deterministic Ed25519 over raw bytes; randomizing MPC wallets are refused at setup; Ledger needs separate support. |
-| R13 | Heir loses their wallet | Their share cannot be opened again; recovery runs through enough guardians releasing to a new inbox the on-chain heir wallet certifies. |
+| R13 | Heir loses their wallet | Their share cannot be opened again (the inbox key derives from the wallet's signature) and, since v2, they cannot `claim` (the claim opens the commitment with that wallet's signature), so the on-chain path stops at `ClaimPending`. While the owner is alive: a new capsule for the new wallet. After that, only k guardians opening their shares and recombining together (`openShare` + `recoverSecret` in the SDK, not in the UI) can help: the R15 path, used on purpose. A lost kit file alone is harmless: the same wallet re-derives the inbox key, and every guardian holds a copy of the kit with the salts. |
 | R14 | Transitive npm advisories | `uuid` chains through `@solana/web3.js` and `toml` in the test tooling; the vulnerable code paths are not reached (analysis in the Indonesian edition). Monitored. |
 | R15 | Guardian collusion without the heir | With k = quorum + 1 and at least k guardians, k colluding guardians can open the kit without the heir. Inherent to threshold schemes and also the heir's recovery path (R13). The create wizard warns whenever this path exists; quorum = all guardians removes it. |
 | R16 | Demo keys in `localStorage` | Demo personas and the in-browser relayer keep hot keys in the browser; devnet/localnet only, labelled as demo, protected by a strict CSP. Real wallets never store keys in the app. |
