@@ -90,8 +90,8 @@ kripto", atau bahwa waktu heartbeat tersembunyi (tidak).
 | Heartbeat tanpa wallet pemilik | E2E Chrome (`app/e2e/demo-flow.mjs`) membaca ulang **semua 6 transaksi kapsul** di chain: wallet pemilik muncul di **0** |
 | Murah | Verifikasi heartbeat **41.012 CU**; fee 5.000 lamport. Heartbeat mingguan 30 tahun ≈ **0,0078 SOL** |
 | Kriptografi benar | Transkrip Fiat–Shamir dikunci *known-answer vector* lintas bahasa (TS ↔ Rust); HPKE lolos vektor resmi RFC 9180; Shamir pakai library teraudit (Cure53 + Zellic) |
-| Aman | Self-audit 17 temuan (`docs/SECURITY-REVIEW.md`, program + SDK + app): replay, double-vote guardian, veto DoS, swap kunci inbox, dst. — semua High/Critical sudah diperbaiki dan dites |
-| Bekerja end-to-end | 62 test (LiteSVM + SDK + client) + 10 unit test Rust + E2E browser 12 langkah: seed phrase pulih identik di browser ahli waris |
+| Aman | Self-audit 18 temuan (`docs/SECURITY-REVIEW.md`, program + SDK + app): replay, double-vote guardian, veto DoS, swap kunci inbox, dst. — semua High/Critical sudah diperbaiki dan dites |
+| Bekerja end-to-end | 63 test (LiteSVM + SDK + client) + 10 unit test Rust + E2E browser 12 langkah, di validator lokal **dan di devnet**: seed phrase pulih identik di browser ahli waris |
 
 ## 6. Bisnis & go-to-market *(rencana; belum ada pendapatan)*
 
@@ -116,7 +116,7 @@ lewat komunitas kripto, kampus, dan notaris/perencana keuangan. Setelah itu peng
 
 | Kriteria (Rules §8) | Jawaban SIKRIT |
 |---|---|
-| **Functionality** | Program Anchor + SDK + app berjalan end-to-end; 62 test + E2E browser; kode diaudit sendiri dengan temuan terdokumentasi |
+| **Functionality** | Program Anchor live di devnet + SDK + app berjalan end-to-end; 63 test + E2E browser (localnet & devnet); kode diaudit sendiri dengan temuan terdokumentasi |
 | **Potential Impact** | Jutaan BTC terkunci permanen; setiap pengguna self-custody butuh rencana waris; primitive privasi yang bisa dipakai ulang (*proof of liveness* tanpa identitas) |
 | **Novelty** | Heartbeat tanpa identitas: tidak ada di 11 proyek yang kami periksa. Bukti Schnorr diverifikasi dengan syscall curve25519 dalam 41k CU |
 | **UX** | Tanpa token, tanpa KYC, tanpa hardware khusus. Pemilik tidak perlu SOL dan tidak perlu backup kunci baru (diturunkan ulang dari wallet). Setup ±2 menit |

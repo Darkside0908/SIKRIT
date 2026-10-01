@@ -58,6 +58,36 @@ Catatan build:
 - `.cargo/config.toml` memaksa backend `serial` curve25519-dalek untuk build host, karena backend AVX-512 tidak bisa di-compile dengan nightly 2024-01-30 yang dipakai IDL build Anchor 0.30.x.
 - Simpan `target/deploy/sikrit-keypair.json` (keypair program ID `FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F`) — dibutuhkan untuk deploy pertama ke devnet.
 
+## Devnet
+
+Program ter-deploy di devnet sejak 1 Okt 2026: [`FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F`](https://explorer.solana.com/address/FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F?cluster=devnet)
+(ProgramData `9W3hXq1MCz8ZKL7D9o3Do6xWb5aYUa3kNsK6TzUs42Jp`, ruang 480.000 byte untuk upgrade, upgrade authority
+`FNNYNGG688Y2wp2Nnb7K37ZsBTBF2HAFVFSxUh8iVd5N` — lihat R4 di security review). `solana config` global di mesin dev
+menunjuk mainnet-beta, jadi **selalu tulis `-u devnet`**.
+
+```bash
+# upgrade setelah `npm run build` (keypair program ID di target/deploy/, gitignored)
+solana program deploy -u devnet --use-rpc --keypair ~/.config/solana/id.json \
+  --program-id target/deploy/sikrit-keypair.json target/deploy/sikrit.so
+
+# bukti byte on-chain == build lokal (sisa ProgramData adalah padding nol)
+solana program dump -u devnet FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F /tmp/onchain.so
+head -c "$(stat -c%s target/deploy/sikrit.so)" /tmp/onchain.so | sha256sum; sha256sum target/deploy/sikrit.so
+
+# IDL Anchor on-chain (akun GbTdbmEG2ufQD2AL23uC62CxJQR5pZYzaoUBzWj22ie5): explorer mendekode instruksi SIKRIT.
+# Setelah IDL berubah: `idl upgrade` (bukan `idl init`, yang hanya bisa sekali)
+npx anchor idl upgrade -f target/idl/sikrit.json FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F --provider.cluster devnet
+npx anchor idl fetch FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F --provider.cluster devnet   # cek
+
+# seluruh cerita demo lewat bundle produksi (CSP ketat) melawan devnet, ~4 menit, ~0,004 SOL
+cd app && npm run e2e:devnet
+```
+
+`npm run e2e:devnet` mendanai relayer run itu 0,1 SOL dari `FUND_RELAYER_FROM` (default `~/.config/solana/id.json`)
+karena faucet publik devnet menolak top-up dari browser, lalu mengembalikan sisanya. RPC publik devnet membatasi
+`getProgramAccounts` dengan ketat: discovery guardian sengaja satu query per polling (bukan satu per slot), dan polling
+berhenti saat tab tersembunyi. Untuk demo publik yang ramai, build dengan `VITE_RPC_URL=<RPC khusus>`.
+
 ## Biaya compute (LiteSVM, binary SBF asli)
 
 | Instruksi | Compute units |

@@ -14,13 +14,15 @@
  *   RECORD_DIR   also record the run as demo-flow.mp4 there (B-roll for the demo video; the two
  *                60-second waits are cut out). Needs ffmpeg on PATH (or FFMPEG=/path/to/ffmpeg)
  *   SLOWMO=ms    pause between browser actions (makes a recording watchable)
+ *   FUND_RELAYER_FROM  keypair file that pre-funds the app's relayer with 0.1 SOL (the rest is swept
+ *                back afterwards). For devnet, whose public faucet rate-limits the app's own top-up
  *
- * Needs capsule timers of 60 s (the localnet defaults in the create form), so a run takes ~3 min.
+ * Picks capsule timers of 60 s in the create form, so a run takes ~3 min.
  */
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
-import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
 import { chromium } from "playwright-core";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:5173";
@@ -29,6 +31,7 @@ const CHROME = process.env.CHROME_PATH ?? "/usr/bin/google-chrome";
 const OUT = new URL("./out/", import.meta.url).pathname;
 const SHOTS = process.env.SHOTS_DIR;
 const RECORD = process.env.RECORD_DIR;
+const FUNDER = process.env.FUND_RELAYER_FROM;
 const SAMPLE_SEED = "abandon ability able about above absent absorb abstract absurd abuse access accident";
 const MINUTE = 60_000;
 
@@ -37,11 +40,24 @@ if (SHOTS) mkdirSync(SHOTS, { recursive: true });
 const browser = await chromium.launch({ executablePath: CHROME, headless: !process.env.HEADED, slowMo: Number(process.env.SLOWMO ?? 0) });
 const viewport = { width: 1440, height: 900 };
 const context = await browser.newContext({ viewport, deviceScaleFactor: SHOTS ? 2 : 1 });
+const relayer = FUNDER ? await fundRelayer(FUNDER) : undefined;
+if (relayer) {
+  // Same storage format as app/src/lib/actors.ts; set before the app's own scripts run.
+  await context.addInitScript((secret) => {
+    if (!localStorage.getItem("sikrit:relayer:v1")) localStorage.setItem("sikrit:relayer:v1", JSON.stringify({ relayer: secret }));
+  }, Buffer.from(relayer.keypair.secretKey).toString("base64"));
+}
 const page = await context.newPage();
 const recorder = RECORD ? await record(page, RECORD) : undefined;
 const problems = [];
+let rateLimited = 0;
 page.on("pageerror", (e) => problems.push(`pageerror: ${e.message}`));
-page.on("console", (m) => m.type() === "error" && problems.push(`console.error: ${m.text()}`));
+page.on("console", (m) => {
+  if (m.type() !== "error") return;
+  // A public RPC's 429s are retried by web3.js; they fail the run only if a step stalls because of them.
+  if (/\b429\b/.test(m.text())) rateLimited++;
+  else problems.push(`console.error: ${m.text()}`);
+});
 
 /**
  * Screencast over CDP, assembled with ffmpeg (Playwright's own recorder needs a separate
@@ -81,6 +97,24 @@ async function record(target, dir) {
       return `${dir}/demo-flow.mp4`;
     },
   };
+}
+
+async function fundRelayer(path) {
+  const connection = new Connection(RPC, "confirmed");
+  const funder = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(readFileSync(path, "utf8"))));
+  const keypair = Keypair.generate();
+  const transfer = SystemProgram.transfer({ fromPubkey: funder.publicKey, toPubkey: keypair.publicKey, lamports: 0.1 * LAMPORTS_PER_SOL });
+  await sendAndConfirmTransaction(connection, new Transaction().add(transfer), [funder]);
+  console.log(`relayer ${keypair.publicKey.toBase58()} funded with 0.1 SOL by ${funder.publicKey.toBase58()}`);
+  return { connection, funder: funder.publicKey, keypair };
+}
+
+/** Sends what the run did not spend back to the funder, closing the relayer account. */
+async function sweepRelayer({ connection, funder, keypair }) {
+  const lamports = (await connection.getBalance(keypair.publicKey)) - 5000; // minus the transfer's own fee
+  if (lamports <= 0) return;
+  const transfer = SystemProgram.transfer({ fromPubkey: keypair.publicKey, toPubkey: funder, lamports });
+  await sendAndConfirmTransaction(connection, new Transaction().add(transfer), [keypair]);
 }
 
 const started = Date.now();
@@ -142,6 +176,9 @@ try {
     await text("✓ signed by Sari").waitFor();
     await dwell(2500);
     await button("Use a sample seed phrase").click();
+    // 60 s timers on every cluster (a devnet build defaults to a 3-minute heartbeat).
+    await page.getByLabel("Heartbeat every").selectOption("60");
+    await page.getByLabel("Grace period").selectOption("60");
     await dwell(2000, button("Seal the capsule"));
     await shot("01-create");
     await curate("create", page.locator("main"));
@@ -259,9 +296,10 @@ try {
       const keys = tx.transaction.message.staticAccountKeys ?? tx.transaction.message.accountKeys;
       if (keys.some((key) => key.equals(owner))) throw new Error(`owner wallet appears in ${signature}`);
     }
-    console.log(`\n  ${signatures.length} capsule transactions, owner ${owner.toBase58()} in none of them`);
+    console.log(`\n  capsule ${capsule.toBase58()}: ${signatures.length} transactions, owner ${owner.toBase58()} in none of them`);
   });
 
+  if (rateLimited) console.log(`  ${rateLimited} rate-limited RPC responses (HTTP 429), retried by web3.js`);
   if (problems.length) throw new Error(`browser reported errors:\n  ${problems.join("\n  ")}`);
   console.log(`\nE2E demo flow passed in ${((Date.now() - started) / 1000).toFixed(0)}s · screenshots in ${OUT}`);
 } catch (error) {
@@ -273,4 +311,5 @@ try {
   if (recorder) console.log(`recording saved: ${await recorder.save()}`);
   await context.close();
   await browser.close();
+  if (relayer) await sweepRelayer(relayer).catch((error) => console.error(`relayer sweep failed: ${error.message}`));
 }

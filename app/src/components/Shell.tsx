@@ -1,7 +1,7 @@
 import { PROGRAM_ID } from "@sdk/client";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { WalletReadyState } from "@solana/wallet-adapter-base";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { CLUSTER, DEMO_ENABLED, RPC_URL } from "../config";
 import { Persona, Role, relayerKeypair, resetDemo } from "../lib/actors";
@@ -123,7 +123,8 @@ function RelayerBadge() {
   const [balance, setBalance] = useState<number>();
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
-  const relayer = relayerKeypair().publicKey;
+  // One key object per mount: a fresh one each render would re-run the effect (and an RPC call) on every render.
+  const relayer = useMemo(() => relayerKeypair().publicKey, []);
 
   useEffect(() => {
     let live = true;
@@ -131,7 +132,8 @@ function RelayerBadge() {
     // Localnet's faucet is unlimited: fund the relayer up front instead of on the first action.
     if (CLUSTER === "localnet") void ensureFunded(relayer, 0.5, 5).then(load, () => {});
     void load();
-    const id = setInterval(load, 8000);
+    // Every relayer transaction fires RELAYER_EVENT; the timer only catches outside top-ups.
+    const id = setInterval(load, 30_000);
     window.addEventListener(RELAYER_EVENT, load);
     return () => {
       live = false;

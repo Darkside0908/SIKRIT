@@ -41,7 +41,8 @@ Alternative (≤ 60 chars): *Private proof-of-life inheritance for self-custody.
 > 2. **Prove.** The owner proves knowledge of a dedicated liveness key with a Schnorr proof (Fiat–Shamir, domain-
 >    separated, bound to a counter so each proof works once). The Anchor program verifies it with Solana's curve25519
 >    syscalls in ~41k CU. The capsule address derives from the proof key, not a wallet, and any relayer can submit
->    the proof. Our end-to-end test replays a full inheritance and finds the owner's wallet in 0 of 6 transactions.
+>    the proof. Our end-to-end test replays a full inheritance on Solana devnet and finds the owner's wallet in 0 of 6
+>    transactions.
 > 3. **Release.** After a missed interval anyone can open a claim; a heartbeat cancels it and guardians can veto a
 >    false alarm. After the grace period and a guardian quorum, the heir claims, guardians release their shares to
 >    the heir's certified inbox, and the secret reassembles in the heir's browser.
@@ -56,13 +57,15 @@ Alternative (≤ 60 chars): *Private proof-of-life inheritance for self-custody.
 
 - **Solana** — Anchor 0.30.1 program (`programs/sikrit`), curve25519 syscalls (`sol_curve_validate_point`,
   `sol_curve_group_op`, `sol_curve_multiscalar_mul`), PDAs. Program ID `FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F`
-  (devnet deploy: ⟨pending devnet SOL — see PROGRESS.md⟩).
+  — **live on devnet** ([explorer](https://explorer.solana.com/address/FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F?cluster=devnet);
+  deployed bytes identical to the `anchor build` output).
 - **Client crypto** — `@noble/curves` (Ed25519/X25519), `@noble/hashes`, `@noble/ciphers` (XChaCha20-Poly1305),
   HPKE RFC 9180 implemented on noble (`sdk/hpke.ts`), `shamir-secret-sharing` (Privy; audited by Cure53 and Zellic).
 - **App** — `@solana/web3.js`, Solana Wallet Adapter / Wallet Standard (Phantom, Solflare, Backpack), Vite, React 19,
   Tailwind CSS 4.
 - **Testing** — LiteSVM (time-travel lifecycle tests on the real SBF binary), Mocha/Chai, Rust unit tests,
-  Playwright-driven Chrome end-to-end test against `solana-test-validator`.
+  Playwright-driven Chrome end-to-end test against `solana-test-validator` and, through the production bundle, against
+  the devnet deployment (`cd app && npm run e2e:devnet`).
 
 ## 6. Team
 
@@ -79,7 +82,9 @@ the form asks⟩.
 | Item | Value |
 |---|---|
 | GitHub repository | ⟨`https://github.com/⟨username⟩/SIKRIT`⟩ — public, MIT |
-| Live demo | ⟨GitHub Pages / Vercel URL⟩ (works once the program is on devnet) · local demo: `cd app && npm run localnet` |
+| Live demo | ⟨GitHub Pages / Vercel URL⟩ (talks to the devnet program) · local demo: `cd app && npm run localnet` |
+| Program (devnet) | [`FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F`](https://explorer.solana.com/address/FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F?cluster=devnet) |
+| A full inheritance on devnet | capsule [`5RR3sGRBZwdXAV6SMLFUzzGksMzuigmaLMEMNVCxjX9i`](https://explorer.solana.com/address/5RR3sGRBZwdXAV6SMLFUzzGksMzuigmaLMEMNVCxjX9i?cluster=devnet): 6 transactions (create → heartbeat → trigger → 2 confirms → claim); its owner's wallet `BvmZmRgnuy6y8tWdTbRPdPDC5jsFfhEm3cMsEnkxTBSW` has never been on-chain |
 | Presentation video (2–3 min) | ⟨YouTube/Loom link⟩ — script: `docs/VIDEO-SCRIPT.md` §1 |
 | Product demo video (≤ 3 min) | ⟨YouTube/Loom link⟩ — script: `docs/VIDEO-SCRIPT.md` §2 |
 | Pitch deck (PDF) | `docs/deck/SIKRIT-deck.pdf` (source `docs/deck/index.html`) |
@@ -150,7 +155,7 @@ Results — fill in with real answers only:
 
 - [ ] Registered on colosseum.com for **Crypto World's Fair** (every team member)
 - [ ] Repo pushed and **public**; README renders; `LICENSE` present
-- [ ] Program deployed to devnet; program ID + explorer link in README (`docs/` mentions updated)
+- [x] Program deployed to devnet; program ID + explorer link in README (`docs/` mentions updated) — done 1 Oct by the loop
 - [ ] Live demo URL works (GitHub Pages / Vercel)
 - [ ] Pitch video (≤ 3:00) and demo video (≤ 3:00) uploaded (unlisted is fine); links pasted above and in the form
 - [ ] Deck PDF regenerated if anything changed (`cd app && npm run deck`)

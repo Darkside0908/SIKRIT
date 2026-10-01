@@ -263,19 +263,42 @@ export function findCapsulesByHeir(connection: Connection, heir: PublicKey, prog
   return findCapsules(connection, [{ memcmp: { offset: HEIR_OFFSET, bytes: heir.toBase58() } }], programId);
 }
 
-/** Capsules listing `guardian` in any of the guardian slots. */
+/**
+ * Capsules listing `guardian` in any of the guardian slots. A memcmp filter tests one slot only, and public RPCs
+ * throttle `getProgramAccounts` hard (one query per slot got rate-limited on devnet), so this reads just the guardian
+ * vector of every capsule in a single query, then fetches the full accounts of the matches.
+ */
 export async function findCapsulesByGuardian(connection: Connection, guardian: PublicKey, programId = PROGRAM_ID) {
-  const perSlot = await Promise.all(
-    Array.from({ length: MAX_GUARDIANS }, (_, slot) =>
-      findCapsules(connection, [{ memcmp: { offset: GUARDIANS_OFFSET + 32 * slot, bytes: guardian.toBase58() } }], programId),
-    ),
-  );
-  // Slots past the vector length are zero padding; keep real members only.
-  const unique = new Map<string, { address: PublicKey; capsule: CapsuleAccount }>();
-  for (const match of perSlot.flat()) {
-    if (match.capsule.guardians.some((g) => g.equals(guardian))) unique.set(match.address.toBase58(), match);
+  const vectors = await connection.getProgramAccounts(programId, {
+    commitment: "confirmed",
+    filters: [{ dataSize: CAPSULE_ACCOUNT_SIZE }],
+    dataSlice: { offset: GUARDIANS_OFFSET - 4, length: 4 + 32 * MAX_GUARDIANS },
+  });
+  const matches = vectors.filter(({ account }) => guardianVectorIncludes(account.data, guardian)).map(({ pubkey }) => pubkey);
+  const found: { address: PublicKey; capsule: CapsuleAccount }[] = [];
+  for (let i = 0; i < matches.length; i += 100) {
+    const batch = matches.slice(i, i + 100); // getMultipleAccounts takes at most 100 keys
+    const infos = await connection.getMultipleAccountsInfo(batch, "confirmed");
+    infos.forEach((info, j) => {
+      const capsule = info && decodeCapsule(info.data);
+      if (capsule?.guardians.some((g) => g.equals(guardian))) found.push({ address: batch[j], capsule });
+    });
   }
-  return [...unique.values()];
+  return found;
+}
+
+/**
+ * `vector` is a Borsh `Vec<Pubkey>` read through a fixed-size window: a u32 length, then that many keys. Borsh does
+ * not pad, so the bytes past the length belong to the next fields and must not be compared.
+ */
+export function guardianVectorIncludes(vector: Uint8Array, guardian: PublicKey): boolean {
+  const count = new DataView(vector.buffer, vector.byteOffset, vector.byteLength).getUint32(0, true);
+  const target = guardian.toBytes();
+  for (let slot = 0; slot < Math.min(count, MAX_GUARDIANS); slot++) {
+    const start = 4 + 32 * slot;
+    if (target.every((byte, i) => byte === vector[start + i])) return true;
+  }
+  return false;
 }
 
 // -----------------------------------------------------------------------------

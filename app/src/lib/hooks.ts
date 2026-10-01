@@ -89,8 +89,12 @@ export function useCapsule(address: PublicKey | undefined) {
   return { capsule, error, refresh };
 }
 
-/** Polls an async loader (capsule lists), with manual refresh. */
-export function usePolling<T>(load: (() => Promise<T>) | undefined, deps: unknown[], everyMs = 6000) {
+/**
+ * Polls an async loader (capsule lists), with manual refresh. Public RPCs rate-limit `getProgramAccounts`, so a tick
+ * is skipped while the last load is still running (web3.js retries a 429 with backoff) or the tab is hidden.
+ * Capsules already on screen stay live through `useCapsule`'s subscription; polling only discovers new ones.
+ */
+export function usePolling<T>(load: (() => Promise<T>) | undefined, deps: unknown[], everyMs = 15_000) {
   const [value, setValue] = useState<T>();
   const [error, setError] = useState<string>();
   const [version, setVersion] = useState(0);
@@ -100,15 +104,22 @@ export function usePolling<T>(load: (() => Promise<T>) | undefined, deps: unknow
       return;
     }
     let live = true;
-    const run = () =>
+    let loading = false;
+    const run = () => {
+      if (loading || document.visibilityState === "hidden") return;
+      loading = true;
       load()
         .then((v) => live && (setValue(v), setError(undefined)))
-        .catch((e) => live && setError(explainError(e)));
-    void run();
+        .catch((e) => live && setError(explainError(e)))
+        .finally(() => (loading = false));
+    };
+    run();
     const id = setInterval(run, everyMs);
+    document.addEventListener("visibilitychange", run);
     return () => {
       live = false;
       clearInterval(id);
+      document.removeEventListener("visibilitychange", run);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, version]);

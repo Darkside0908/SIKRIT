@@ -20,6 +20,8 @@ const PROGRAM_SO = `${ROOT}target/deploy/sikrit.so`;
 const RPC = "http://127.0.0.1:8899";
 const APP_URL = "http://localhost:5173";
 const e2e = process.argv.includes("--e2e");
+// Vite's own entry point rather than `npx`: killing an `npx` wrapper leaves the dev server running.
+const VITE = fileURLToPath(new URL("../node_modules/vite/bin/vite.js", import.meta.url));
 
 const env = { ...process.env, PATH: `${homedir()}/.local/share/solana/install/active_release/bin:${process.env.PATH}` };
 const children = [];
@@ -74,7 +76,7 @@ try {
     console.log(`▸ reusing the app at ${APP_URL}`);
   } else {
     console.log("▸ starting the app");
-    run("npx", ["vite", "--port", "5173", "--strictPort"], { env: { ...env, VITE_CLUSTER: "localnet" } });
+    run(process.execPath, [VITE, "--port", "5173", "--strictPort"], { env: { ...env, VITE_CLUSTER: "localnet" } });
     await up(appServing, "vite");
   }
   console.log(`\n  SIKRIT demo ready → ${APP_URL}  (cluster ${RPC}, program ${PROGRAM_ID})\n`);

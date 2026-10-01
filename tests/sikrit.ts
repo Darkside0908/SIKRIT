@@ -13,6 +13,7 @@ import { sha256 } from "@noble/hashes/sha256";
 import { bytesToHex, hexToBytes, utf8ToBytes } from "@noble/hashes/utils";
 import {
   Connection,
+  GetProgramAccountsConfig,
   Keypair,
   LAMPORTS_PER_SOL,
   PublicKey,
@@ -498,6 +499,68 @@ describe("SIKRIT — privacy-preserving dead man's switch", () => {
       expectSuccess(h.send(client.claimIx({ capsule: address, heir: heir.publicKey }), [heir]));
       expect(decodeBoth().status).to.equal("claimed");
       expect(() => client.decodeCapsule(new Uint8Array(client.CAPSULE_ACCOUNT_SIZE))).to.throw(/not a SIKRIT capsule/);
+    });
+
+    it("finds a guardian's capsules with a single getProgramAccounts over the guardian vector", async () => {
+      const [target, other] = [h.wallet(), h.wallet()];
+      const create = (guardians: PublicKey[]) => {
+        const secret = liveness.generateLivenessSecret();
+        const commitment = liveness.commitmentFromSecret(secret);
+        const [address] = liveness.capsulePda(PROGRAM_ID, commitment);
+        const config: liveness.CapsuleConfigInput = {
+          heir: h.wallet().publicKey,
+          heartbeatInterval: 60n,
+          gracePeriod: 60n,
+          guardians,
+          guardianThreshold: 1,
+          shareHashes: [],
+        };
+        const proof = liveness.proveRegistration(secret, PROGRAM_ID, address, config);
+        const payer = h.wallet();
+        expectSuccess(h.send(client.createCapsuleIx({ payer: payer.publicKey, commitment, config, proof }), [payer]));
+        return address;
+      };
+      const first = create([target.publicKey, other.publicKey]);
+      const last = create([other.publicKey, h.wallet().publicKey, target.publicKey]);
+      const without = create([other.publicKey]);
+
+      const stranger = h.wallet().publicKey; // not a capsule: the dataSize filter must drop it
+
+      // An RPC node over these accounts (LiteSVM has no getProgramAccounts): filters and dataSlice applied server-side.
+      const calls: string[] = [];
+      const rpc = {
+        async getProgramAccounts(programId: PublicKey, config: GetProgramAccountsConfig) {
+          calls.push("getProgramAccounts");
+          expect(programId.equals(PROGRAM_ID)).to.equal(true);
+          return [first, last, without, stranger].flatMap((pubkey) => {
+            const data = Buffer.from(h.svm.getAccount(pubkey)?.data ?? []);
+            if (!(config.filters ?? []).every((f) => "dataSize" in f && data.length === f.dataSize)) return [];
+            const { offset, length } = config.dataSlice!;
+            return [{ pubkey, account: { data: data.subarray(offset, offset + length) } }];
+          });
+        },
+        async getMultipleAccountsInfo(keys: PublicKey[]) {
+          calls.push("getMultipleAccountsInfo");
+          return keys.map((key) => {
+            const account = h.svm.getAccount(key);
+            return account && { data: Buffer.from(account.data) };
+          });
+        },
+      } as unknown as Connection;
+
+      const found = await client.findCapsulesByGuardian(rpc, target.publicKey);
+      expect(found.map(({ address }) => address.toBase58()).sort()).to.deep.equal([first, last].map(String).sort());
+      expect(found.every(({ capsule }) => capsule.guardians.some((g) => g.equals(target.publicKey)))).to.equal(true);
+      expect(calls).to.deep.equal(["getProgramAccounts", "getMultipleAccountsInfo"]);
+      expect(await client.findCapsulesByGuardian(rpc, h.wallet().publicKey)).to.deep.equal([]);
+
+      // Borsh does not pad: bytes past the vector length belong to later fields, even when they look like a key.
+      const vector = new Uint8Array(4 + 32 * client.MAX_GUARDIANS);
+      new DataView(vector.buffer).setUint32(0, 1, true);
+      vector.set(other.publicKey.toBytes(), 4);
+      vector.set(target.publicKey.toBytes(), 4 + 32);
+      expect(client.guardianVectorIncludes(vector, other.publicKey)).to.equal(true);
+      expect(client.guardianVectorIncludes(vector, target.publicKey)).to.equal(false);
     });
   });
 

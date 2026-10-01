@@ -11,6 +11,7 @@ alive, your check-ins are zero-knowledge proofs that never touch your wallet.
 
 <p>
   <b>Colosseum Crypto World's Fair 2026</b> · Solana track · University Award · Public Goods Award<br />
+  <a href="https://explorer.solana.com/address/FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F?cluster=devnet">Program on devnet</a> ·
   <a href="docs/deck/SIKRIT-deck.pdf">Pitch deck (PDF)</a> ·
   Pitch video ⟨link⟩ ·
   Demo video ⟨link⟩ ·
@@ -42,8 +43,12 @@ a typical check-in                        a SIKRIT heartbeat
 
 The owner proves knowledge of a dedicated **liveness key** `x` with a Schnorr zero-knowledge proof. The capsule's
 address is derived from `P = x·G`, not from a wallet, and the instruction needs no signer, so any relayer can submit
-it. Our end-to-end test plays a full inheritance on a live validator and re-reads every capsule transaction: **the
-owner's wallet appears in 0 of 6.**
+it. Our end-to-end test plays a full inheritance in Chrome, on a local validator and on Solana devnet, then re-reads
+every capsule transaction: **the owner's wallet appears in 0 of 6.** Check one devnet run yourself: capsule
+[`5RR3sG…xjX9i`](https://explorer.solana.com/address/5RR3sGRBZwdXAV6SMLFUzzGksMzuigmaLMEMNVCxjX9i?cluster=devnet)
+went from creation to a completed claim, and its owner's wallet
+[`BvmZmR…TBSW`](https://explorer.solana.com/address/BvmZmRgnuy6y8tWdTbRPdPDC5jsFfhEm3cMsEnkxTBSW?cluster=devnet)
+(a demo persona) has never touched the chain at all.
 
 <p align="center"><img src="docs/screenshots/inspector.webp" alt="What the chain sees: relayer, capsule and program accounts, 72 bytes of proof data; the owner's wallet is stamped NOT PRESENT" width="92%" /></p>
 
@@ -89,7 +94,7 @@ stateDiagram-v2
 | `create_capsule` / other instructions | ~69k CU / ~7k CU |
 | Cost of a heartbeat | 5,000 lamports. 30 years of weekly heartbeats ≈ **0.0078 SOL**. No token |
 | Owner wallets in capsule transactions | **0 of 6**, checked on-chain by the E2E test |
-| Tests | 62 TypeScript (LiteSVM lifecycle + SDK + client) · 10 Rust unit · 12-step browser E2E |
+| Tests | 63 TypeScript (LiteSVM lifecycle + SDK + client) · 10 Rust unit · 12-step browser E2E on localnet and devnet |
 
 ## Try it locally (~5 minutes)
 
@@ -107,7 +112,7 @@ relayer pays every fee, so one person can play the whole family in one tab. Real
 Backpack via Wallet Standard) work for every role. Timers can be as short as one minute, the program's minimum.
 
 ```bash
-npm test                # 62 tests: lifecycle on the real SBF binary with a time-travelling clock, SDK vectors, client
+npm test                # 63 tests: lifecycle on the real SBF binary with a time-travelling clock, SDK vectors, client
 npm run test:rust       # verifier unit tests, incl. a known-answer vector shared with the TypeScript prover
 npm run typecheck
 ```
@@ -130,7 +135,7 @@ docs/                        pitch, research, technical spec, security review, d
 ## Security
 
 SIKRIT is a research prototype and **has not been audited externally**. It ships with a self-audit,
-[docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md) (in Indonesian), covering 17 findings across the program, SDK and app, all High/Critical fixed and
+[docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md) (in Indonesian), covering 18 findings across the program, SDK and app, all High/Critical fixed and
 tested: proof replay, guardian double-voting, unbounded veto (DoS), an on-chain verifier that could not run (moved to
 syscalls), encryption keys without authentication (now wallet-signed inbox certificates), unauthenticated Shamir
 reconstruction, and more.
@@ -149,7 +154,8 @@ What is public by design, and stated in the pitch:
 - [x] Client SDK (Shamir + HPKE + kit) with test vectors
 - [x] Demo app (create → heartbeat → claim → guardian release → recovery), browser E2E
 - [x] Static hosting ready (GitHub Pages workflow, `app/vercel.json`)
-- [ ] Devnet deployment of program `FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F` ⟨waiting for devnet SOL; the public faucet is rate-limited⟩
+- [x] Program live on devnet: [`FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F`](https://explorer.solana.com/address/FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F?cluster=devnet)
+  (deployed bytes identical to `anchor build`; the full demo story passes against it with `cd app && npm run e2e:devnet`)
 - [ ] Live demo URL ⟨…⟩
 
 Roadmap: watcher alerts when a claim opens, origin-bound key derivation, Ledger support, external audit, then mainnet.

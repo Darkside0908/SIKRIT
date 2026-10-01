@@ -328,13 +328,13 @@
 </section>
 
 <!-- 5 · PROOF ============================================================ -->
-<section class="slide" data-vital="alive" data-caption='<span class="ok">verified on a live validator</span> · app/e2e/demo-flow.mjs'>
+<section class="slide" data-vital="alive" data-caption='<span class="ok">verified on Solana devnet</span> · app/e2e/demo-flow.mjs'>
   <div class="eyebrow"><span class="num">IV</span>Proof, not promises</div>
   <h2>A proof, not a person.</h2>
   <div class="proof">
     <img class="shot" src="../screenshots/inspector.webp" alt="What the chain sees: a heartbeat transaction with three accounts — relayer, capsule, program — and the owner's wallet stamped NOT PRESENT" />
     <div class="stats">
-      <div class="stat"><div class="big life">0 of 6</div><p>capsule transactions that contain the owner's wallet — re-read from the chain by our end-to-end test after a full inheritance.</p></div>
+      <div class="stat"><div class="big life">0 of 6</div><p>capsule transactions that contain the owner's wallet — re-read from devnet by our end-to-end test after a full inheritance.</p></div>
       <div class="stat"><div class="big">41,012 <span style="font-size:48px;color:var(--bone-400)">CU</span></div><p>to verify a heartbeat proof, via Solana's curve25519 syscalls.</p></div>
       <div class="stat"><div class="big">0.0078 <span style="font-size:48px;color:var(--bone-400)">SOL</span></div><p>for 30 years of weekly heartbeats (5,000 lamports each). No token.</p></div>
     </div>
@@ -380,8 +380,8 @@ accept ⇔ s·G − e·P == R</pre>
         <li>HPKE RFC 9180 <span>· X25519 · HKDF-SHA256 · ChaCha20-Poly1305 · official test vectors</span></li>
         <li>Shamir over GF(2⁸) <span>· audited library (Cure53, Zellic) · only a random key is split</span></li>
         <li>Inbox certificates <span>· a swapped encryption key is rejected, at sealing and at release</span></li>
-        <li>Self-audit <span>· 17 findings (16 fixed, 1 mitigated) · residual risks R1–R16 published</span></li>
-        <li>62 tests + 10 Rust unit tests <span>· plus a browser end-to-end run of the whole story</span></li>
+        <li>Self-audit <span>· 18 findings (17 fixed, 1 mitigated) · residual risks R1–R17 published</span></li>
+        <li>63 tests + 10 Rust unit tests <span>· plus a browser end-to-end run of the whole story, on devnet too</span></li>
       </ul>
       <div class="limits"><b>Honest limits</b>Heartbeat <em style="color:var(--bone-200);font-style:normal">times</em> and heir/guardian addresses are public. Enough colluding guardians could open a kit early. Not post-quantum yet. All on the roadmap.</div>
     </div>
@@ -449,7 +449,7 @@ accept ⇔ s·G − e·P == R</pre>
   </div>
   <div class="finale">
     <div class="line">Prove you're alive.<br /><em>Reveal nothing else.</em></div>
-    <div class="links"><span>code</span> <span data-fill="repo">github.com/Darkside0908/SIKRIT</span><br /><span>program</span> FJKqf…Tc45F<br /><span>license</span> MIT · open source</div>
+    <div class="links"><span>code</span> <span data-fill="repo">github.com/Darkside0908/SIKRIT</span><br /><span>program</span> FJKqf…Tc45F · live on devnet<br /><span>license</span> MIT · open source</div>
   </div>
 </section>
 

@@ -76,6 +76,7 @@ SIKRIT/
 ## ⚡ Next Priorities for Claude Code
 1. ~~Buat dan lengkapi `programs/sikrit/src/lib.rs` sesuai spesifikasi~~ ✅ (lihat `docs/SECURITY-REVIEW.md`)
 2. ~~Pastikan logika verifikasi ZK Schnorr proof bekerja di Rust~~ ✅ (syscall curve25519, ~41k CU)
-3. ~~Siapkan unit tests~~ ✅ (62 test TS: LiteSVM + SDK + client; 10 unit test Rust; E2E browser)
+3. ~~Siapkan unit tests~~ ✅ (63 test TS: LiteSVM + SDK + client; 10 unit test Rust; E2E browser localnet + devnet)
 4. ~~Inisialisasi frontend dashboard untuk demo flow~~ ✅ (`app/`, E2E Chrome hijau; heartbeat dikirim relayer, bukan wallet pemilik)
-5. ~~M2: enkripsi share + custody share lewat guardian (SIK-11)~~ ✅ (`sdk/kit.ts`); berikutnya deploy devnet.
+5. ~~M2: enkripsi share + custody share lewat guardian (SIK-11)~~ ✅ (`sdk/kit.ts`)
+6. ~~Deploy devnet~~ ✅ 1 Okt 2026 (`FJKqf…Tc45F`, byte on-chain = build lokal; `cd app && npm run e2e:devnet` hijau). Upgrade: lihat `docs/DEVELOPMENT.md` §Devnet.

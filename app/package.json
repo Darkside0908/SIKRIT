@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit -p .",
     "localnet": "node scripts/localnet.mjs",
     "e2e": "node scripts/localnet.mjs --e2e",
+    "e2e:devnet": "node scripts/devnet-e2e.mjs",
     "deck": "node scripts/deck.mjs"
   },
   "dependencies": {

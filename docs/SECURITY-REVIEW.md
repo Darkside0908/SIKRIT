@@ -2,7 +2,7 @@
 
 > **Scope:** `programs/sikrit/src/lib.rs` versi awal (draft v0.1), konfigurasi build (`Anchor.toml`, `Cargo.toml`), desain kriptografi Schnorr proof-of-liveness, dan (sejak 30 Sep malam) protokol custody share di SDK client (`sdk/hpke.ts`, `sdk/shamir.ts`, `sdk/kit.ts`) — lihat §5.
 > **Tanggal:** 30 September 2026 · **Metode:** review manual (kriptografi + keamanan smart contract), kompilasi SBF nyata, 10 unit test Rust, 35 test integrasi TypeScript di LiteSVM dengan time-travel, dan benchmark compute unit.
-> **Hasil:** 17 temuan — 3 Critical, 4 High, 4 Medium, 5 Low, 1 Info (desain). Enam belas sudah diperbaiki di kode; SIK-11 dimitigasi di client (urutan release tetap janji guardian, bukan paksaan kriptografis). SIK-16/17 berasal dari audit akhir frontend (§6).
+> **Hasil:** 18 temuan — 3 Critical, 4 High, 4 Medium, 6 Low, 1 Info (desain). Tujuh belas sudah diperbaiki di kode; SIK-11 dimitigasi di client (urutan release tetap janji guardian, bukan paksaan kriptografis). SIK-16/17 berasal dari audit akhir frontend, SIK-18 dari E2E pertama melawan devnet (§6).
 
 ---
 
@@ -27,6 +27,7 @@
 | SIK-15 | 🔵 Low | Derivasi kunci dari tanda tangan wallet mengasumsikan tanda tangan deterministik tanpa dicek | ✅ Fixed (§5) |
 | SIK-16 | 🟡 Medium | Frontend: state release guardian bocor antar persona/akun → guardian kedua melihat "released" palsu dan share-nya tak pernah dikirim | ✅ Fixed (§6) |
 | SIK-17 | 🔵 Low | Frontend: app bisa di-frame di host tanpa header keamanan → clickjacking prompt tanda tangan derivasi kunci | ✅ Fixed (§6) |
+| SIK-18 | 🔵 Low | Discovery guardian (5 × `getProgramAccounts` per polling) ter-rate-limit RPC publik → guardian tak melihat kapsulnya, jalur release macet | ✅ Fixed (§6) |
 
 Nomor baris di bawah merujuk ke **draft awal** `lib.rs`.
 
@@ -187,9 +188,9 @@ Semua di bawah budget default 200.000 CU per instruksi → tidak perlu instruksi
 | R1 | Waktu heartbeat tetap publik | `last_heartbeat` dan timestamp transaksi terlihat oleh siapa pun yang tahu alamat kapsul (termasuk ahli waris & guardian). Yang disembunyikan adalah **siapa** (tidak ada tautan ke wallet), bukan **kapan**. Roadmap v2: bukti keanggotaan anonim (ring signature / Groth16) agar heartbeat tidak menunjuk kapsul tertentu. |
 | R2 | Tautan lewat fee payer | Jika wallet pemilik membayar `create_capsule`/`heartbeat`, transaksi itu menautkan wallet ke kapsul. Frontend harus memakai fee payer terpisah (burner/relayer). v2: relayer yang dibayar dari saldo kapsul. |
 | R3 | Heir & guardian publik | Pubkey ahli waris dan guardian tersimpan plaintext. v2: simpan komitmen hash + salt, dibuka saat aksi. |
-| R4 | Upgrade authority | Program Solana dapat di-upgrade oleh deployer. Untuk produksi: pindahkan upgrade authority ke multisig atau jadikan immutable setelah audit. |
+| R4 | Upgrade authority | Program Solana dapat di-upgrade oleh deployer. Di devnet (deploy 1 Okt 2026) authority = satu hot key `FNNYNGG688Y2wp2Nnb7K37ZsBTBF2HAFVFSxUh8iVd5N`. Upgrade jahat (atau kunci bocor) bisa melonggarkan timer → ahli waris mengklaim lebih awal → guardian me-release; rahasia tetap butuh share ahli waris + kuorum guardian, tetapi gerbang "pemilik diam" hilang. Untuk mainnet: authority ke multisig (Squads) dengan timelock, build terverifikasi (`solana-verify`), lalu immutable setelah audit eksternal. |
 | R5 | Penundaan oleh guardian jahat | Terbatas `jumlah_guardian × (interval + grace)`. Jika ingin lebih ketat: veto butuh threshold guardian. |
-| R6 | Toolchain legacy | Anchor 0.30.x menghasilkan SBPF v0. Agave 4.3 sudah memuat feature gate SIMD-0500 (menonaktifkan deploy SBPF v0–v2) yang **belum aktif** di devnet/mainnet per 30 Sep 2026. Setelah hackathon, migrasi ke Anchor 1.x (SBPF v3). |
+| R6 | Toolchain legacy | Anchor 0.30.x menghasilkan SBPF v0. Agave 4.3 sudah memuat feature gate SIMD-0500 (menonaktifkan deploy SBPF v0–v2) yang **belum aktif** di devnet/mainnet per 30 Sep 2026; deploy devnet 1 Okt 2026 berhasil. Gate itu memblokir deploy/upgrade baru, bukan eksekusi program yang sudah ada — tetapi setelah aktif, perbaikan bug butuh build SBPF v3. Setelah hackathon, migrasi ke Anchor 1.x (SBPF v3). |
 | R7 | Rent tidak bisa ditarik kembali | Tidak ada instruksi `close`; rent ~0,005 SOL per kapsul terkunci. Tambahkan `close` pasca-`Claimed` jika diperlukan. |
 | R8 | Pemilik tidak sadar ada trigger | Pemilik perlu notifikasi off-chain (watcher event `ClaimTriggered`) agar sempat heartbeat selama grace period. |
 | R9 | Phishing tanda tangan kunci liveness / inbox | `deriveLivenessSecret()` (SDK) menurunkan `x` dari tanda tangan wallet atas `KEYGEN_MESSAGE`. Situs phishing yang mendapat tanda tangan yang sama bisa memalsukan heartbeat (menahan pewarisan), walau tidak bisa membuka rahasia. Mitigasi: ikat origin/domain aplikasi ke pesan (gaya Sign-In With Solana) atau pakai `generateLivenessSecret()` acak yang disimpan terenkripsi. Hal yang sama berlaku untuk `INBOX_MESSAGE`: tanda tangan yang dicuri membuka share milik pemegang itu saja (< k). |
@@ -200,6 +201,7 @@ Semua di bawah budget default 200.000 CU per instruksi → tidak perlu instruksi
 | R14 | Advisory npm transitif | Dicek ulang 1 Okt 2026 (`npm audit --omit=dev`). Root: `toml` ≤ 4.1.2 (via `@anchor-lang/core`, hanya dipakai test suite untuk membaca workspace Anchor; tidak masuk app) dan `uuid` < 11.1.1. App: 10 *moderate*, semuanya rantai `uuid` lewat `@solana/web3.js` (`jayson` → uuid 8, `rpc-websockets` → uuid 14) dan wallet adapter yang bergantung padanya. Advisory uuid (GHSA-w5hq-g745-h8pq) hanya terpicu bila argumen `buf` diberikan ke v3/v5/v6; kedua pemanggil hanya membuat ID request/socket tanpa `buf`. Tidak ada perbaikan non-breaking; dipantau. |
 | R15 | Kolusi guardian tanpa ahli waris | Kit memakai Shamir k = kuorum + 1 atas n = 1 + jumlah guardian. Kalau jumlah guardian ≥ k (mis. 3 guardian, kuorum 2 → k = 3), **k guardian yang berkolusi bisa membuka rahasia tanpa ahli waris dan sebelum klaim on-chain**. Ini sifat bawaan skema threshold, dan sekaligus jalur pemulihan R13. Ahli waris sendirian atau kuorum guardian saja (< k) tidak bisa. Wizard menampilkan peringatan ini setiap kali jalur kolusi tersebut ada; pemilik yang tidak menginginkannya bisa memilih kuorum = semua guardian (k = jumlah guardian + 1, ahli waris selalu dibutuhkan, tapi R13 hilang). |
 | R16 | Kunci demo di localStorage | Mode demo menyimpan keypair persona dan relayer di `localStorage` browser (hot key, terbaca oleh script apa pun di origin itu). Hanya untuk devnet/localnet dan dilabeli demo di UI; CSP produksi (`script-src 'self'`) membatasi XSS. Wallet sungguhan tidak pernah menyimpan kunci di app: kunci liveness & inbox hanya di memori, diturunkan ulang dari tanda tangan. |
+| R17 | Guardian memercayai RPC-nya | App guardian me-release setelah RPC melaporkan status `Claimed`. RPC jahat atau terkompromi (mis. dikendalikan ahli waris yang tak sabar) bisa melaporkan `Claimed` lebih awal. Share tetap hanya terbuka untuk inbox ahli waris yang tersertifikasi, jadi serangan ini butuh kolusi ahli waris + RPC dan hanya mengenai guardian yang memakai RPC itu. Mitigasi sekarang: guardian mengecek transaksi `claim` di explorer sebelum release; roadmap: app memverifikasi status lewat ≥ 2 RPC independen. |
 
 ### Catatan kejujuran klaim (PITCH.md)
 
@@ -277,6 +279,22 @@ digiring menyetujui.
 **Perbaikan:** `app/vercel.json` mengirim `frame-ancestors 'none'` + `X-Frame-Options: DENY`; `main.tsx` menolak
 berjalan bila `window.top !== window.self` (untuk host tanpa header); `<meta name="referrer" content="no-referrer">`.
 
+### SIK-18 🔵 Discovery guardian ter-rate-limit di RPC publik → jalur release macet
+
+**Masalah:** halaman Guardian mencari kapsul dengan satu `getProgramAccounts` per slot guardian (5 query paralel tiap
+6 detik) yang digabung `Promise.all`. RPC publik devnet membatasi `getProgramAccounts` dengan ketat: probe 30 detik di
+halaman Guardian mencatat 38 query dan 15 dibalas HTTP 429, dan satu 429 saja menggagalkan seluruh polling. Guardian
+tidak pernah melihat kapsulnya → tombol release tidak muncul → ahli waris tertahan di bawah threshold selama RPC
+membatasi. Ditemukan oleh E2E pertama melawan devnet (1 Okt). Tidak berdampak pada kerahasiaan atau integritas; murni
+ketersediaan, dan sementara.
+**Perbaikan:** `findCapsulesByGuardian` kini satu `getProgramAccounts` dengan `dataSlice` hanya atas vektor guardian
+(u32 panjang + 5 × 32 byte; slot dibandingkan sebatas panjang Borsh, karena byte sesudahnya milik field berikutnya)
+plus satu `getMultipleAccountsInfo` untuk kapsul yang cocok. `usePolling` tiap 15 detik dan melewati tick saat query
+sebelumnya masih berjalan atau tab tersembunyi; badge relayer tidak lagi memanggil RPC di setiap render.
+**Test:** unit test *finds a guardian's capsules with a single getProgramAccounts…* (RPC tiruan yang menerapkan
+`dataSize` + `dataSlice` atas akun kapsul LiteSVM asli, termasuk byte mirip kunci setelah panjang vektor); probe ulang:
+3 query per 30 detik, 0 × 429; `npm run e2e:devnet` lulus (141 detik, 0 × 429).
+
 ### Hal lain yang dicek (tanpa temuan)
 
 - Tidak ada sink HTML mentah (`dangerouslySetInnerHTML`, `innerHTML`, `eval`) di `app/src` maupun `sdk/`; semua link
@@ -296,9 +314,10 @@ berjalan bila `window.top !== window.self` (untuk host tanpa header); `<meta nam
 ```bash
 npm run build                # anchor build: SBF + IDL (Solana 1.18.17, Anchor CLI 0.30.2)
 npm run test:rust            # 10 unit test verifier Schnorr + validasi config
-npm test                     # 62 test: lifecycle di LiteSVM + SDK + client (Node 24 LTS)
+npm test                     # 63 test: lifecycle di LiteSVM + SDK + client (Node 24 LTS)
 npm run typecheck
 cd app && npm run e2e        # E2E Chrome: seluruh cerita warisan + cek privasi on-chain (SIK-16)
+cd app && npm run e2e:devnet # cerita yang sama lewat bundle produksi melawan program di devnet (SIK-18)
 ```
 
 Detail toolchain ada di `docs/DEVELOPMENT.md`.
