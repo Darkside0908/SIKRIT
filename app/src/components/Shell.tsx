@@ -1,10 +1,11 @@
+import { PROGRAM_ID } from "@sdk/client";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { WalletReadyState } from "@solana/wallet-adapter-base";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { CLUSTER, DEMO_ENABLED, RPC_URL } from "../config";
 import { Persona, Role, relayerKeypair, resetDemo } from "../lib/actors";
-import { RELAYER_EVENT, balanceSol, ensureFunded } from "../lib/chain";
+import { RELAYER_EVENT, balanceSol, connection, ensureFunded } from "../lib/chain";
 import { short } from "../lib/format";
 import { useActor } from "../lib/identity";
 import { href, Route } from "../lib/router";
@@ -60,6 +61,7 @@ export function Shell({ route, children }: { route: Route; children: ReactNode }
         </nav>
       </header>
 
+      <ProgramNotice />
       <main className="mx-auto w-full max-w-6xl flex-1 px-5 py-10">{children}</main>
 
       <footer className="border-t border-ink-800">
@@ -87,6 +89,26 @@ export function Shell({ route, children }: { route: Route; children: ReactNode }
   );
 }
 
+/** Explains up front when the cluster has no SIKRIT program (e.g. devnet before deployment). */
+function ProgramNotice() {
+  const [missing, setMissing] = useState(false);
+  useEffect(() => {
+    connection
+      .getAccountInfo(PROGRAM_ID, "confirmed")
+      .then((info) => setMissing(!info?.executable))
+      .catch(() => {});
+  }, []);
+  if (!missing) return null;
+  return (
+    <div className="border-b border-amber-glow/40 bg-amber-glow/10">
+      <p className="mx-auto max-w-6xl px-5 py-3 text-sm leading-relaxed text-amber-glow">
+        The SIKRIT program is not deployed on {CLUSTER} yet, so capsules cannot be created here. Run the full demo
+        locally with <span className="mono">cd app &amp;&amp; npm run localnet</span> (see the README).
+      </p>
+    </div>
+  );
+}
+
 function ClusterBadge() {
   return (
     <span className="chip hidden border-ink-600 text-bone-300 md:inline-flex" title={RPC_URL}>
@@ -106,6 +128,8 @@ function RelayerBadge() {
   useEffect(() => {
     let live = true;
     const load = () => balanceSol(relayer).then((b) => live && setBalance(b)).catch(() => live && setBalance(undefined));
+    // Localnet's faucet is unlimited: fund the relayer up front instead of on the first action.
+    if (CLUSTER === "localnet") void ensureFunded(relayer, 0.5, 5).then(load, () => {});
     void load();
     const id = setInterval(load, 8000);
     window.addEventListener(RELAYER_EVENT, load);
