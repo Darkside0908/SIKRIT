@@ -380,7 +380,7 @@ accept ⇔ s·G − e·P == R</pre>
         <li>HPKE RFC 9180 <span>· X25519 · HKDF-SHA256 · ChaCha20-Poly1305 · official test vectors</span></li>
         <li>Shamir over GF(2⁸) <span>· audited library (Cure53, Zellic) · only a random key is split</span></li>
         <li>Inbox certificates <span>· a swapped encryption key is rejected, at sealing and at release</span></li>
-        <li>Self-audit <span>· 15 findings fixed, residual risks R1–R15 documented</span></li>
+        <li>Self-audit <span>· 17 findings (16 fixed, 1 mitigated) · residual risks R1–R16 published</span></li>
         <li>62 tests + 10 Rust unit tests <span>· plus a browser end-to-end run of the whole story</span></li>
       </ul>
       <div class="limits"><b>Honest limits</b>Heartbeat <em style="color:var(--bone-200);font-style:normal">times</em> and heir/guardian addresses are public. Enough colluding guardians could open a kit early. Not post-quantum yet. All on the roadmap.</div>

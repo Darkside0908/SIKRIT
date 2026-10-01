@@ -2,7 +2,7 @@
 
 > **Scope:** `programs/sikrit/src/lib.rs` versi awal (draft v0.1), konfigurasi build (`Anchor.toml`, `Cargo.toml`), desain kriptografi Schnorr proof-of-liveness, dan (sejak 30 Sep malam) protokol custody share di SDK client (`sdk/hpke.ts`, `sdk/shamir.ts`, `sdk/kit.ts`) — lihat §5.
 > **Tanggal:** 30 September 2026 · **Metode:** review manual (kriptografi + keamanan smart contract), kompilasi SBF nyata, 10 unit test Rust, 35 test integrasi TypeScript di LiteSVM dengan time-travel, dan benchmark compute unit.
-> **Hasil:** 15 temuan — 3 Critical, 4 High, 3 Medium, 4 Low, 1 Info (desain). Empat belas sudah diperbaiki di kode; SIK-11 dimitigasi di client (urutan release tetap janji guardian, bukan paksaan kriptografis).
+> **Hasil:** 17 temuan — 3 Critical, 4 High, 4 Medium, 5 Low, 1 Info (desain). Enam belas sudah diperbaiki di kode; SIK-11 dimitigasi di client (urutan release tetap janji guardian, bukan paksaan kriptografis). SIK-16/17 berasal dari audit akhir frontend (§6).
 
 ---
 
@@ -25,6 +25,8 @@
 | SIK-13 | 🟡 Medium | Shamir `combine` diam-diam menghasilkan rahasia salah untuk share palsu/kurang | ✅ Fixed (§5) |
 | SIK-14 | 🔵 Low | Seed phrase di-split langsung (secret tidak uniform, panjang share membocorkan panjang rahasia) | ✅ Fixed (§5) |
 | SIK-15 | 🔵 Low | Derivasi kunci dari tanda tangan wallet mengasumsikan tanda tangan deterministik tanpa dicek | ✅ Fixed (§5) |
+| SIK-16 | 🟡 Medium | Frontend: state release guardian bocor antar persona/akun → guardian kedua melihat "released" palsu dan share-nya tak pernah dikirim | ✅ Fixed (§6) |
+| SIK-17 | 🔵 Low | Frontend: app bisa di-frame di host tanpa header keamanan → clickjacking prompt tanda tangan derivasi kunci | ✅ Fixed (§6) |
 
 Nomor baris di bawah merujuk ke **draft awal** `lib.rs`.
 
@@ -195,8 +197,9 @@ Semua di bawah budget default 200.000 CU per instruksi → tidak perlu instruksi
 | R11 | Side channel JavaScript | JS (JIT + GC) tidak menjamin constant-time; aritmetika GF(2^8) library Shamir memakai tabel lookup. Operasi dilakukan sekali di device pengguna; penyerang lokal yang bisa mengukur cache di device itu di luar model ancaman. |
 | R12 | Kompatibilitas wallet | Derivasi kunci butuh `signMessage` dengan tanda tangan Ed25519 deterministik atas byte mentah. Wallet MPC dengan tanda tangan acak ditolak saat setup (SIK-15); Ledger yang hanya menandatangani format *off-chain message* Solana perlu dukungan terpisah. |
 | R13 | Ahli waris kehilangan wallet | Share ahli waris tidak bisa dibuka lagi. Jalan pemulihan: kuorum guardian yang cukup untuk k (mis. 3 guardian untuk k = 3) me-release ke kunci inbox baru, asalkan wallet `heir` on-chain masih bisa menandatangani sertifikat baru. |
-| R14 | Advisory npm transitif | `npm audit --omit=dev`: `toml` (via `@anchor-lang/core`) dan `uuid` (via `@solana/web3.js`). Jalur kodenya (parsing TOML workspace Anchor, `uuid` v3/v5 dengan buffer) tidak dipakai SDK/frontend; dicek ulang saat audit akhir (F6). |
+| R14 | Advisory npm transitif | Dicek ulang 1 Okt 2026 (`npm audit --omit=dev`). Root: `toml` ≤ 4.1.2 (via `@anchor-lang/core`, hanya dipakai test suite untuk membaca workspace Anchor; tidak masuk app) dan `uuid` < 11.1.1. App: 10 *moderate*, semuanya rantai `uuid` lewat `@solana/web3.js` (`jayson` → uuid 8, `rpc-websockets` → uuid 14) dan wallet adapter yang bergantung padanya. Advisory uuid (GHSA-w5hq-g745-h8pq) hanya terpicu bila argumen `buf` diberikan ke v3/v5/v6; kedua pemanggil hanya membuat ID request/socket tanpa `buf`. Tidak ada perbaikan non-breaking; dipantau. |
 | R15 | Kolusi guardian tanpa ahli waris | Kit memakai Shamir k = kuorum + 1 atas n = 1 + jumlah guardian. Kalau jumlah guardian ≥ k (mis. 3 guardian, kuorum 2 → k = 3), **k guardian yang berkolusi bisa membuka rahasia tanpa ahli waris dan sebelum klaim on-chain**. Ini sifat bawaan skema threshold, dan sekaligus jalur pemulihan R13. Ahli waris sendirian atau kuorum guardian saja (< k) tidak bisa. Wizard menampilkan peringatan ini setiap kali jalur kolusi tersebut ada; pemilik yang tidak menginginkannya bisa memilih kuorum = semua guardian (k = jumlah guardian + 1, ahli waris selalu dibutuhkan, tapi R13 hilang). |
+| R16 | Kunci demo di localStorage | Mode demo menyimpan keypair persona dan relayer di `localStorage` browser (hot key, terbaca oleh script apa pun di origin itu). Hanya untuk devnet/localnet dan dilabeli demo di UI; CSP produksi (`script-src 'self'`) membatasi XSS. Wallet sungguhan tidak pernah menyimpan kunci di app: kunci liveness & inbox hanya di memori, diturunkan ulang dari tanda tangan. |
 
 ### Catatan kejujuran klaim (PITCH.md)
 
@@ -250,13 +253,52 @@ share_0 → ahli waris, share_{1+g} → guardian g, k − 1 = kuorum guardian
 
 ---
 
-## 6. Cara Mereproduksi
+## 6. Audit Akhir Frontend & Dependensi (1 Okt 2026)
+
+Cakupan: `app/` (Vite + React), cara app memakai `sdk/*`, konfigurasi hosting, dependensi produksi. Metode: review
+manual + E2E Chrome yang memainkan seluruh cerita warisan melawan validator lokal dan membaca ulang semua transaksi
+kapsul dari chain (`app/e2e/demo-flow.mjs`).
+
+### SIK-16 🟡 State release guardian bocor antar persona/akun
+
+**Masalah:** komponen per-kapsul di halaman Guardian di-key hanya dengan alamat kapsul. Beberapa guardian berbagi kapsul
+yang sama, jadi saat berganti persona/akun, React memakai ulang komponen dan state `token` milik guardian sebelumnya.
+Guardian kedua melihat *"Released to Sari's inbox"* padahal ia belum me-release apa pun: share-nya tidak pernah dikirim,
+dan ahli waris bisa tertahan di bawah threshold. Ditemukan oleh E2E (Dewi tidak pernah bisa menekan tombol release).
+**Perbaikan:** komponen di-key per actor + kapsul (Guardian & Heir); status release disimpan per `(kapsul, wallet
+guardian)` di outbox mailbox, bukan di state komponen; kit hasil impor hanya disimpan bila lolos `verifyKit`.
+**Test:** E2E langkah "guardians release their shares" (Budi lalu Dewi) + "heir reassembles the seed phrase".
+
+### SIK-17 🔵 Clickjacking pada host tanpa header
+
+**Masalah:** app meminta wallet menandatangani pesan derivasi kunci liveness/inbox. Di host statis tanpa header
+(GitHub Pages), halaman bisa dimuat di iframe situs lain. Prompt wallet tetap menampilkan pesannya, tapi pengguna bisa
+digiring menyetujui.
+**Perbaikan:** `app/vercel.json` mengirim `frame-ancestors 'none'` + `X-Frame-Options: DENY`; `main.tsx` menolak
+berjalan bila `window.top !== window.self` (untuk host tanpa header); `<meta name="referrer" content="no-referrer">`.
+
+### Hal lain yang dicek (tanpa temuan)
+
+- Tidak ada sink HTML mentah (`dangerouslySetInnerHTML`, `innerHTML`, `eval`) di `app/src` maupun `sdk/`; semua link
+  eksternal `rel="noreferrer"`.
+- Build produksi memasang CSP ketat (`default-src 'self'`, `script-src 'self'`, `connect-src` hanya RPC yang
+  dikonfigurasi). E2E lulus melawan bundle produksi tanpa satu pun pelanggaran CSP.
+- Input tak tepercaya (invite, file kit, token release) diparse ketat dan diverifikasi kriptografis sebelum dipakai:
+  `decodeInboxCertificate`, `decodeKit` + `verifyKit` terhadap state on-chain, `openRelease` + hash share.
+- Plaintext rahasia dihapus dari state setelah sealing; hasil recovery di-blur dan baru tampil saat ditahan
+  (*hold to reveal*), dengan tombol hapus dari layar.
+- Wizard memakai threshold kit = kuorum + 1 sesuai on-chain dan menampilkan peringatan R15.
+
+---
+
+## 7. Cara Mereproduksi
 
 ```bash
 npm run build                # anchor build: SBF + IDL (Solana 1.18.17, Anchor CLI 0.30.2)
 npm run test:rust            # 10 unit test verifier Schnorr + validasi config
-npm test                     # 35 test lifecycle di LiteSVM + 24 test SDK (Node 24 LTS)
+npm test                     # 62 test: lifecycle di LiteSVM + SDK + client (Node 24 LTS)
 npm run typecheck
+cd app && npm run e2e        # E2E Chrome: seluruh cerita warisan + cek privasi on-chain (SIK-16)
 ```
 
-Detail toolchain ada di `README.md`.
+Detail toolchain ada di `docs/DEVELOPMENT.md`.

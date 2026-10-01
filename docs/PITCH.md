@@ -90,7 +90,7 @@ kripto", atau bahwa waktu heartbeat tersembunyi (tidak).
 | Heartbeat tanpa wallet pemilik | E2E Chrome (`app/e2e/demo-flow.mjs`) membaca ulang **semua 6 transaksi kapsul** di chain: wallet pemilik muncul di **0** |
 | Murah | Verifikasi heartbeat **41.012 CU**; fee 5.000 lamport. Heartbeat mingguan 30 tahun ≈ **0,0078 SOL** |
 | Kriptografi benar | Transkrip Fiat–Shamir dikunci *known-answer vector* lintas bahasa (TS ↔ Rust); HPKE lolos vektor resmi RFC 9180; Shamir pakai library teraudit (Cure53 + Zellic) |
-| Aman | Self-audit 15 temuan (`docs/SECURITY-REVIEW.md`): replay, double-vote guardian, veto DoS, swap kunci inbox, dst. — semua High/Critical sudah diperbaiki dan dites |
+| Aman | Self-audit 17 temuan (`docs/SECURITY-REVIEW.md`, program + SDK + app): replay, double-vote guardian, veto DoS, swap kunci inbox, dst. — semua High/Critical sudah diperbaiki dan dites |
 | Bekerja end-to-end | 62 test (LiteSVM + SDK + client) + 10 unit test Rust + E2E browser 12 langkah: seed phrase pulih identik di browser ahli waris |
 
 ## 6. Bisnis & go-to-market *(rencana; belum ada pendapatan)*

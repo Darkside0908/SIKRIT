@@ -59,9 +59,10 @@ before recording. The program enforces 60-second minimum timers, so the two wait
 | 2:40 | Public capsule page | Scroll the public record | "And this is everything the world can learn about the capsule. The owner isn't in it. Prove you're alive — reveal nothing else." |
 | 2:50 | End card | Logo + repo URL | — |
 
-**Automatic B-roll (backup):** `RECORD_DIR=/tmp/rec SLOWMO=250 npm run e2e` (in `app/`) records the whole story as
-`.webm` at 1440 × 900 with no manual clicking. It has no mouse cursor and includes the two 60-second waits; cut them in
-the editor (or `ffmpeg -ss … -to …`).
+**Automatic B-roll (backup):** `RECORD_DIR=/tmp/rec SLOWMO=450 npm run e2e` (in `app/`, needs `ffmpeg` on PATH)
+plays the whole story by itself and writes `/tmp/rec/demo-flow.mp4`: 1440 × 900, ~66 s, the two 60-second waits already
+cut out, key screens held for a few seconds. There is no mouse cursor, so use it under a voice-over or as cut-aways. A
+copy from 1 Oct is in `app/e2e/out/demo-flow-broll.mp4` (gitignored, regenerate any time).
 
 ---
 

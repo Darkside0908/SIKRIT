@@ -126,7 +126,7 @@ export function Home() {
         </div>
         <p className="max-w-3xl text-sm leading-relaxed text-bone-500">
           Honest limits: the time of each heartbeat is public, and so are the heir's and guardians' addresses. What no
-          observer can learn is which wallet — which person — the capsule belongs to. The full threat model and fifteen
+          observer can learn is which wallet — which person — the capsule belongs to. The full threat model and seventeen
           self-audit findings are in the security review.
         </p>
       </section>

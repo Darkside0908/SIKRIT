@@ -130,7 +130,7 @@ docs/                        pitch, research, technical spec, security review, d
 ## Security
 
 SIKRIT is a research prototype and **has not been audited externally**. It ships with a self-audit,
-[docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md) (in Indonesian), covering 15 findings, all High/Critical fixed and
+[docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md) (in Indonesian), covering 17 findings across the program, SDK and app, all High/Critical fixed and
 tested: proof replay, guardian double-voting, unbounded veto (DoS), an on-chain verifier that could not run (moved to
 syscalls), encryption keys without authentication (now wallet-signed inbox certificates), unauthenticated Shamir
 reconstruction, and more.

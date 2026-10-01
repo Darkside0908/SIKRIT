@@ -61,7 +61,12 @@ try {
   } else {
     if (!existsSync(PROGRAM_SO)) throw new Error(`${PROGRAM_SO} is missing: run \`npm run build\` in the repo root first`);
     console.log("▸ starting solana-test-validator with the SIKRIT program");
-    run("solana-test-validator", ["--reset", "--quiet", "--ledger", `${ROOT}test-ledger`, "--bpf-program", PROGRAM_ID, PROGRAM_SO]);
+    // A large ledger limit keeps the whole demo's transaction history queryable: the default
+    // (10,000 shreds) purges it within minutes, and the E2E privacy check reads it back.
+    run("solana-test-validator", [
+      "--reset", "--quiet", "--ledger", `${ROOT}test-ledger`, "--limit-ledger-size", "50000000",
+      "--bpf-program", PROGRAM_ID, PROGRAM_SO,
+    ]);
     await up(programDeployed, "solana-test-validator");
   }
 
