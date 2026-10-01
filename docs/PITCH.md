@@ -126,7 +126,7 @@ lewat komunitas kripto, kampus, dan notaris/perencana keuangan. Setelah itu peng
 | **Potential Impact** | Jutaan BTC terkunci permanen; setiap pengguna self-custody butuh rencana waris; primitive privasi yang bisa dipakai ulang (*proof of liveness* tanpa identitas) |
 | **Novelty** | Heartbeat tanpa identitas: tidak ada di 11 proyek yang kami periksa. Bukti Schnorr diverifikasi dengan syscall curve25519 dalam 41k CU. Roster tersegel melengkapinya (Ethernal juga menyegel ahli waris, tapi pemiliknya tetap terlihat): pemilik **dan** keluarganya tidak terlihat sampai bertindak |
 | **UX** | Tanpa token, tanpa KYC, tanpa hardware khusus. Pemilik tidak perlu SOL dan tidak perlu backup kunci baru (diturunkan ulang dari wallet). Setup ±2 menit |
-| **Open-source** | Seluruh repo terbuka; SDK tanpa Anchor di browser; heartbeat signer-less sehingga siapa pun bisa membangun relayer/watcher; format kit berversi |
+| **Open-source** | Seluruh repo terbuka; SDK tanpa Anchor di browser dengan panduan integrasi (`sdk/README.md`: wallet, relayer, watcher); heartbeat signer-less sehingga siapa pun bisa membangun relayer/watcher; format kit berversi |
 | **Business Plan** | Open core: integrasi wallet, watcher/relayer premium, guardian profesional (notaris) |
 
 ## 8. Persiapan Q&A (jawaban jujur)

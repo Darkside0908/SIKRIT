@@ -138,6 +138,7 @@ sdk/hpke.ts                  HPKE RFC 9180 base mode (X25519, HKDF-SHA256, ChaCh
 sdk/shamir.ts                Shamir over GF(2^8), wrapping an audited library
 sdk/kit.ts                   capsule kit: seal, verify against the chain, release, recover
 sdk/client.ts                dependency-light program client (no Anchor in the browser)
+sdk/README.md                integration guide for wallets, relayers and watchers, one capsule end to end
 app/                         demo app: Vite + React + Tailwind + wallet adapter
 app/api/relay.ts             relayer service (Vercel function / dev server): pays fees for SIKRIT instructions only
 app/e2e/demo-flow.mjs        end-to-end test in Chrome + on-chain privacy check

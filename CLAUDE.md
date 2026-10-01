@@ -47,6 +47,7 @@ SIKRIT/
 │       └── src/
 │           └── lib.rs        <-- Core Anchor Program logic + unit test Rust
 ├── sdk/
+│   ├── README.md             <-- Panduan integrasi (wallet, relayer, watcher); snippet di-typecheck terhadap SDK
 │   ├── liveness.ts           <-- Prover Schnorr (TS), identik byte-per-byte dengan verifier on-chain
 │   ├── hpke.ts               <-- HPKE RFC 9180 (X25519/HKDF-SHA256/ChaCha20-Poly1305)
 │   ├── shamir.ts             <-- Wrapper Shamir GF(2^8) (library teraudit)

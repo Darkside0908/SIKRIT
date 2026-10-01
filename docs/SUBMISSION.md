@@ -102,8 +102,8 @@ the form asks⟩.
 > Indonesia first: 22.93 million registered crypto investors (OJK, July 2026), a strong culture of family inheritance,
 > and notaries who already handle wills (*akta wasiat*). We reach users through local crypto communities, university
 > blockchain clubs, and notaries and financial planners who can act as professional guardians. Then we go global
-> through wallets: SIKRIT's SDK is dependency-light (no Anchor client in the browser), so a Solana wallet can ship an
-> "Inheritance" tab on top of it.
+> through wallets: SIKRIT's SDK is dependency-light (no Anchor client in the browser) and documented for integrators
+> (`sdk/README.md`), so a Solana wallet can ship an "Inheritance" tab on top of it.
 
 **Business model (paste).**
 > Open core with no token. The program and SDK stay open source. Revenue: (1) wallet integrations (integration and
