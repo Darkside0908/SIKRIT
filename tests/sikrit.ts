@@ -23,8 +23,10 @@ import {
 } from "@solana/web3.js";
 import { expect } from "chai";
 import { readFileSync } from "fs";
+import { Readable } from "stream";
 import { FailedTransactionMetadata, LiteSVM, TransactionMetadata } from "litesvm";
 
+import * as relayService from "../app/api/relay";
 import * as client from "../sdk/client";
 import * as kit from "../sdk/kit";
 import * as liveness from "../sdk/liveness";
@@ -561,6 +563,172 @@ describe("SIKRIT — privacy-preserving dead man's switch", () => {
       vector.set(target.publicKey.toBytes(), 4 + 32);
       expect(client.guardianVectorIncludes(vector, other.publicKey)).to.equal(true);
       expect(client.guardianVectorIncludes(vector, target.publicKey)).to.equal(false);
+    });
+  });
+
+  describe("relayer service (app/api/relay.ts)", () => {
+    // The service's chain is LiteSVM, so "relayed" means the real program binary accepted the transaction.
+    const serviceFor = (keypair: Keypair, limits?: relayService.RelayOptions["limits"]) =>
+      relayService.createRelay({
+        secretKey: keypair.secretKey,
+        limits,
+        chain: {
+          async sendRawTransaction(raw) {
+            const tx = Transaction.from(Buffer.from(raw));
+            const result = h.svm.sendTransaction(tx);
+            if (result instanceof FailedTransactionMetadata) {
+              throw Object.assign(new Error("Transaction simulation failed"), { logs: result.meta().logs() });
+            }
+            return bytesToHex(tx.signature!);
+          },
+          async getBalance(address) {
+            return Number(h.svm.getBalance(new PublicKey(address)) ?? 0n);
+          },
+        },
+      });
+    /** What the app posts: the relayer as fee payer, co-signed by `signers`, the relayer's signature still missing. */
+    const posted = (ixs: TransactionInstruction[], feePayer: PublicKey, signers: Keypair[] = []) => {
+      h.svm.expireBlockhash();
+      const tx = new Transaction().add(...ixs);
+      tx.feePayer = feePayer;
+      tx.recentBlockhash = h.svm.latestBlockhash();
+      if (signers.length) tx.partialSign(...signers);
+      return tx.serialize({ requireAllSignatures: false }).toString("base64");
+    };
+    const newCapsuleIx = (payer: PublicKey, guardians: PublicKey[], heir: PublicKey) => {
+      const secret = liveness.generateLivenessSecret();
+      const commitment = liveness.commitmentFromSecret(secret);
+      const [address] = liveness.capsulePda(PROGRAM_ID, commitment);
+      const config: liveness.CapsuleConfigInput = {
+        heir, heartbeatInterval: 60n, gracePeriod: 60n, guardians, guardianThreshold: 1, shareHashes: [],
+      };
+      const proof = liveness.proveRegistration(secret, PROGRAM_ID, address, config);
+      return { secret, address, ix: client.createCapsuleIx({ payer, commitment, config, proof }) };
+    };
+
+    it("pays for a whole inheritance while signing only as fee payer and rent payer", async () => {
+      const relayer = h.wallet(2);
+      const service = serviceFor(relayer);
+      const [heir, guardian] = [h.wallet(0), h.wallet(0)]; // no SOL: the relayer pays everything
+      const capsule = newCapsuleIx(relayer.publicKey, [guardian.publicKey], heir.publicKey);
+      const ok = async (base64: string) => {
+        const reply = await service.relay(base64);
+        expect(reply.status, JSON.stringify(reply.body)).to.equal(200);
+      };
+
+      await ok(posted([capsule.ix], relayer.publicKey));
+      const beat = liveness.proveLiveness(capsule.secret, PROGRAM_ID, capsule.address, 0n);
+      await ok(posted([client.heartbeatIx({ capsule: capsule.address, proof: beat })], relayer.publicKey));
+      h.warp(60);
+      await ok(posted([client.triggerClaimIx({ capsule: capsule.address })], relayer.publicKey));
+      await ok(posted([client.guardianConfirmIx({ capsule: capsule.address, guardian: guardian.publicKey })], relayer.publicKey, [guardian]));
+      h.warp(60);
+      await ok(posted([client.claimIx({ capsule: capsule.address, heir: heir.publicKey })], relayer.publicKey, [heir]));
+
+      expect(client.decodeCapsule(Uint8Array.from(h.svm.getAccount(capsule.address)!.data)).status).to.equal("claimed");
+      expect(Number(h.svm.getBalance(heir.publicKey) ?? 0n) + Number(h.svm.getBalance(guardian.publicKey) ?? 0n)).to.equal(0);
+    });
+
+    it("refuses every transaction that could spend its SOL on anything else", async () => {
+      const relayer = h.wallet(2);
+      const service = serviceFor(relayer);
+      const attacker = h.wallet(0);
+      const guardian = h.wallet(0);
+      const capsule = newCapsuleIx(relayer.publicKey, [relayer.publicKey, guardian.publicKey], attacker.publicKey);
+      expect((await service.relay(posted([capsule.ix], relayer.publicKey))).status).to.equal(200);
+      const before = h.svm.getBalance(relayer.publicKey);
+      const beat = () => client.heartbeatIx({ capsule: capsule.address, proof: liveness.proveLiveness(capsule.secret, PROGRAM_ID, capsule.address, 0n) });
+
+      const refusals: [string, unknown, RegExp][] = [
+        ["drain through a System transfer",
+          posted([SystemProgram.transfer({ fromPubkey: relayer.publicKey, toPubkey: attacker.publicKey, lamports: LAMPORTS_PER_SOL })], relayer.publicKey),
+          /only SIKRIT instructions/],
+        ["SIKRIT instruction smuggling a second one", posted([beat(), beat()], relayer.publicKey), /exactly one instruction/],
+        ["someone else as fee payer", posted([beat()], attacker.publicKey, [attacker]), /must be the fee payer/],
+        ["the relayer as a guardian (it was listed as one)",
+          posted([client.guardianConfirmIx({ capsule: capsule.address, guardian: relayer.publicKey })], relayer.publicKey),
+          /signs only as fee payer/],
+        ["an unknown SIKRIT instruction",
+          posted([new TransactionInstruction({ programId: PROGRAM_ID, keys: [], data: Buffer.alloc(8, 7) })], relayer.publicKey),
+          /unknown SIKRIT instruction/],
+        ["a missing co-signature",
+          posted([client.guardianConfirmIx({ capsule: capsule.address, guardian: guardian.publicKey })], relayer.publicKey),
+          /signature is missing or invalid/],
+        ["not a transaction", "bm90IGEgdHJhbnNhY3Rpb24=", /expected \{ transaction/],
+        ["not even a string", { transaction: 1 }, /expected \{ transaction/],
+      ];
+      for (const [what, body, error] of refusals) {
+        const reply = await service.relay(body);
+        expect(reply.status, what).to.equal(400);
+        expect(reply.body.error, what).to.match(error);
+      }
+      expect(h.svm.getBalance(relayer.publicKey), "nothing was sent").to.equal(before);
+    });
+
+    it("hands program errors back with their logs, so the app can name them", async () => {
+      const relayer = h.wallet(2);
+      const service = serviceFor(relayer);
+      const capsule = newCapsuleIx(relayer.publicKey, [h.wallet(0).publicKey], h.wallet(0).publicKey);
+      await service.relay(posted([capsule.ix], relayer.publicKey));
+      const stale = liveness.proveLiveness(capsule.secret, PROGRAM_ID, capsule.address, 5n); // wrong nonce
+      const reply = await service.relay(posted([client.heartbeatIx({ capsule: capsule.address, proof: stale })], relayer.publicKey));
+      expect(reply.status).to.equal(422);
+      expect(client.explainError(Object.assign(new Error(reply.body.error), { logs: reply.body.logs }))).to.match(/ProofVerificationFailed/);
+    });
+
+    it("rate-limits each client, caps new capsules, and says when it is out of SOL", async () => {
+      const relayer = h.wallet(2);
+      const service = serviceFor(relayer, { perMinute: 3, capsulesPerHour: 1 });
+      const people = (): [PublicKey[], PublicKey] => [[h.wallet(0).publicKey], h.wallet(0).publicKey];
+      expect((await service.relay(posted([newCapsuleIx(relayer.publicKey, ...people()).ix], relayer.publicKey), "a")).status).to.equal(200);
+      const second = await service.relay(posted([newCapsuleIx(relayer.publicKey, ...people()).ix], relayer.publicKey), "a");
+      expect([second.status, second.body.error]).to.deep.equal([429, "relayer: too many requests from this address, try again in a minute"]);
+      expect((await service.relay(posted([newCapsuleIx(relayer.publicKey, ...people()).ix], relayer.publicKey), "b")).status).to.equal(200);
+
+      const keeper = (address: PublicKey) => posted([client.triggerClaimIx({ capsule: address })], relayer.publicKey);
+      const statuses: number[] = [];
+      for (let i = 0; i < 3; i++) statuses.push((await service.relay(keeper(Keypair.generate().publicKey), "c")).status);
+      expect(statuses, "program errors still count; the fourth request in a minute is refused").to.deep.equal([422, 422, 422]);
+      expect((await service.relay(keeper(Keypair.generate().publicKey), "c")).status).to.equal(429);
+
+      const broke = serviceFor(Keypair.generate());
+      const reply = await broke.relay(posted([client.triggerClaimIx({ capsule: Keypair.generate().publicKey })], broke.publicKey));
+      expect(reply.status).to.equal(503);
+      expect(reply.body.error).to.include(`out of test SOL, send devnet SOL to ${broke.publicKey.toBase58()}`);
+    });
+
+    it("knows the same instructions as the SDK and serves Vercel and plain Node requests alike", async () => {
+      const names: Record<string, keyof typeof client.DISCRIMINATORS> = {
+        create_capsule: "createCapsule", heartbeat: "heartbeat", trigger_claim: "triggerClaim",
+        guardian_confirm: "guardianConfirm", guardian_veto: "guardianVeto", claim: "claim",
+      };
+      for (const { name, discriminator } of relayService.RELAYED) {
+        expect(bytesToHex(discriminator), name).to.equal(bytesToHex(client.DISCRIMINATORS[names[name]]));
+      }
+
+      const relayer = h.wallet(2);
+      const handler = relayService.relayHandler(serviceFor(relayer));
+      const call = async (method: string, body?: unknown, parsedByPlatform = false) => {
+        const text = typeof body === "string" ? body : JSON.stringify(body);
+        const raw = body === undefined || parsedByPlatform ? [] : [Buffer.from(text)];
+        const req = Object.assign(Readable.from(raw), { method, headers: {}, ...(parsedByPlatform ? { body } : {}) });
+        const res = { statusCode: 0, text: "", headers: {} as Record<string, string>,
+          setHeader(name: string, value: string) { this.headers[name] = value; }, end(text: string) { this.text = text; } };
+        await handler(req as never, res as never);
+        expect(res.headers["cache-control"]).to.equal("no-store");
+        return { status: res.statusCode, body: JSON.parse(res.text) };
+      };
+      expect(await call("GET")).to.deep.equal({ status: 200, body: { relayer: relayer.publicKey.toBase58() } });
+      const tx = () => posted([client.triggerClaimIx({ capsule: Keypair.generate().publicKey })], relayer.publicKey);
+      expect((await call("POST", { transaction: tx() })).status, "streamed body (vite dev/preview)").to.equal(422);
+      expect((await call("POST", { transaction: tx() }, true)).status, "parsed body (Vercel)").to.equal(422);
+      expect((await call("POST", "{oops")).status).to.equal(400);
+      expect((await call("PUT")).status).to.equal(405);
+
+      const unconfigured = relayService.relayHandler(undefined);
+      const res = { statusCode: 0, text: "", setHeader() {}, end(text: string) { this.text = text; } };
+      await unconfigured(Object.assign(Readable.from([]), { method: "GET", headers: {} }) as never, res as never);
+      expect([res.statusCode, JSON.parse(res.text).error]).to.deep.equal([503, "relayer not configured (RELAYER_SECRET_KEY)"]);
     });
   });
 

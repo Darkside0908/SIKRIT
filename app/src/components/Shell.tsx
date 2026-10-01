@@ -1,11 +1,12 @@
 import { PROGRAM_ID } from "@sdk/client";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { WalletReadyState } from "@solana/wallet-adapter-base";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { CLUSTER, DEMO_ENABLED, RPC_URL } from "../config";
-import { Persona, Role, relayerKeypair, resetDemo } from "../lib/actors";
-import { RELAYER_EVENT, balanceSol, connection, ensureFunded } from "../lib/chain";
+import { Persona, Role, resetDemo } from "../lib/actors";
+import { RELAYER_EVENT, balanceSol, connection } from "../lib/chain";
+import { useRelayer } from "../lib/relayer";
 import { short } from "../lib/format";
 import { useActor } from "../lib/identity";
 import { href, Route } from "../lib/router";
@@ -118,19 +119,19 @@ function ClusterBadge() {
   );
 }
 
-/** The relayer pays every fee; on localnet/devnet it can top itself up from the faucet. */
+/** The relayer pays every fee: a relayer service, or a demo key in this browser that tops itself up from the faucet. */
 function RelayerBadge() {
+  const relayer = useRelayer();
   const [balance, setBalance] = useState<number>();
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
-  // One key object per mount: a fresh one each render would re-run the effect (and an RPC call) on every render.
-  const relayer = useMemo(() => relayerKeypair().publicKey, []);
 
   useEffect(() => {
+    if (!relayer) return;
     let live = true;
-    const load = () => balanceSol(relayer).then((b) => live && setBalance(b)).catch(() => live && setBalance(undefined));
-    // Localnet's faucet is unlimited: fund the relayer up front instead of on the first action.
-    if (CLUSTER === "localnet") void ensureFunded(relayer, 0.5, 5).then(load, () => {});
+    const load = () => balanceSol(relayer.publicKey).then((b) => live && setBalance(b)).catch(() => live && setBalance(undefined));
+    // Localnet's faucet is unlimited: fund a browser relayer up front instead of on the first action.
+    if (CLUSTER === "localnet" && relayer.kind === "browser") void relayer.ready(0.5).then(load, () => {});
     void load();
     // Every relayer transaction fires RELAYER_EVENT; the timer only catches outside top-ups.
     const id = setInterval(load, 30_000);
@@ -143,10 +144,12 @@ function RelayerBadge() {
   }, [relayer]);
 
   const fund = async () => {
+    if (relayer?.kind !== "browser") return;
     setBusy(true);
     setFailed(false);
     try {
-      setBalance(await ensureFunded(relayer, 0.5, CLUSTER === "devnet" ? 1 : 5));
+      await relayer.ready(0.5);
+      setBalance(await balanceSol(relayer.publicKey));
     } catch {
       setFailed(true);
     } finally {
@@ -154,12 +157,17 @@ function RelayerBadge() {
     }
   };
 
+  const address = relayer?.publicKey.toBase58() ?? "…";
   const low = balance !== undefined && balance < 0.05;
   return (
     <button
       className={`chip hidden md:inline-flex ${low || failed ? "border-seal-500/60 text-seal-300" : "border-ink-600 text-bone-300"}`}
       onClick={fund}
-      title={`Relayer ${relayer.toBase58()} pays all fees. Click to request a faucet top-up.${failed ? " Faucet request failed — send devnet SOL to this address." : ""}`}
+      title={
+        relayer?.kind === "service"
+          ? `Relayer service ${address} pays all fees.`
+          : `Relayer ${address} (a demo key in this browser) pays all fees. Click to request a faucet top-up.${failed ? " Faucet request failed — send devnet SOL to this address." : ""}`
+      }
     >
       {busy ? <Spinner /> : <span className="text-bone-500">relayer</span>}
       {balance === undefined ? "offline" : `${balance.toFixed(3)} SOL`}

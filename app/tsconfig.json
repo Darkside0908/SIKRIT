@@ -11,6 +11,8 @@
     "noFallthroughCasesInSwitch": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "types": ["vite/client"],
     "paths": {
@@ -21,5 +23,5 @@
       "buffer": ["./node_modules/buffer"]
     }
   },
-  "include": ["src", "../sdk", "vite.config.ts"]
+  "include": ["src", "api", "../sdk", "vite.config.ts"]
 }

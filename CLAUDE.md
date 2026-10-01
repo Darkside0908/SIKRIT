@@ -52,7 +52,9 @@ SIKRIT/
 │   └── client.ts             <-- Client program ringan (instruksi, decoder, discovery), cocok byte-per-byte dgn Anchor
 ├── app/                      <-- Frontend demo Vite + React + Tailwind v4 + wallet adapter (import @sdk/*)
 │   ├── src/pages/            <-- Home, Owner (create + dashboard), Heir, Guardian, Capsule (public view)
+│   ├── api/relay.ts          <-- Relayer service (Vercel function; di-mount vite dev/preview): fee hanya untuk 1 instruksi SIKRIT
 │   ├── scripts/localnet.mjs  <-- `npm run localnet`: validator + program + dev server
+│   ├── scripts/devnet-e2e.mjs <-- `npm run e2e:devnet`: bundle produksi + relayer service melawan program di devnet
 │   └── e2e/demo-flow.mjs     <-- `npm run e2e`: seluruh cerita demo di Chrome + cek privasi on-chain
 └── tests/
     ├── sikrit.ts             <-- Test lifecycle kapsul di LiteSVM (time-travel)
@@ -69,6 +71,7 @@ SIKRIT/
 - Format transkrip Fiat–Shamir dikunci oleh known-answer vector di `tests/sikrit.ts` dan unit test Rust — ubah keduanya bersamaan.
 - Format kit (domain `SIKRIT:*:v1`, derivasi inbox key, hash share) dikunci vector di `tests/sdk.ts`; ubah = naikkan versi kit.
 - Kustodi share: share 0 → heir, share 1+g → guardian g, k − 1 = kuorum guardian. Guardian hanya release setelah `Claimed` ke inbox yang disertifikasi wallet `heir` on-chain (lihat SIK-11/12).
+- Relayer: `app/api/relay.ts` (ESM, dimuat Node 24 secara native di test; ts-node mengabaikan `app/api/`). `vite.config.ts` mengimpornya, jadi mengedit file itu me-restart dev server + reload halaman — jangan saat E2E berjalan.
 - App: `cd app && npm run localnet` lalu `npm run e2e` (butuh Chrome di `CHROME_PATH`, default `/usr/bin/google-chrome`; ~2,5 menit karena timer minimum program 60 s). Komponen per-kapsul di halaman Guardian/Heir WAJIB di-key per actor (beberapa guardian berbagi kapsul — state bocor antar persona pernah jadi bug).
 
 ---
@@ -76,7 +79,7 @@ SIKRIT/
 ## ⚡ Next Priorities for Claude Code
 1. ~~Buat dan lengkapi `programs/sikrit/src/lib.rs` sesuai spesifikasi~~ ✅ (lihat `docs/SECURITY-REVIEW.md`)
 2. ~~Pastikan logika verifikasi ZK Schnorr proof bekerja di Rust~~ ✅ (syscall curve25519, ~41k CU)
-3. ~~Siapkan unit tests~~ ✅ (63 test TS: LiteSVM + SDK + client; 10 unit test Rust; E2E browser localnet + devnet)
+3. ~~Siapkan unit tests~~ ✅ (68 test TS: LiteSVM + SDK + client + relayer; 10 unit test Rust; E2E browser localnet + devnet)
 4. ~~Inisialisasi frontend dashboard untuk demo flow~~ ✅ (`app/`, E2E Chrome hijau; heartbeat dikirim relayer, bukan wallet pemilik)
 5. ~~M2: enkripsi share + custody share lewat guardian (SIK-11)~~ ✅ (`sdk/kit.ts`)
 6. ~~Deploy devnet~~ ✅ 1 Okt 2026 (`FJKqf…Tc45F`, byte on-chain = build lokal; `cd app && npm run e2e:devnet` hijau). Upgrade: lihat `docs/DEVELOPMENT.md` §Devnet.

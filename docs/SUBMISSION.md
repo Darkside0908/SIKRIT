@@ -63,6 +63,8 @@ Alternative (≤ 60 chars): *Private proof-of-life inheritance for self-custody.
   HPKE RFC 9180 implemented on noble (`sdk/hpke.ts`), `shamir-secret-sharing` (Privy; audited by Cure53 and Zellic).
 - **App** — `@solana/web3.js`, Solana Wallet Adapter / Wallet Standard (Phantom, Solflare, Backpack), Vite, React 19,
   Tailwind CSS 4.
+- **Relayer service** — `app/api/relay.ts`, a Vercel serverless function (also mounted by the dev server): pays the fee
+  of single SIKRIT instructions, so the owner's wallet never signs or pays and visitors need no test SOL.
 - **Testing** — LiteSVM (time-travel lifecycle tests on the real SBF binary), Mocha/Chai, Rust unit tests,
   Playwright-driven Chrome end-to-end test against `solana-test-validator` and, through the production bundle, against
   the devnet deployment (`cd app && npm run e2e:devnet`).
@@ -82,7 +84,7 @@ the form asks⟩.
 | Item | Value |
 |---|---|
 | GitHub repository | ⟨`https://github.com/⟨username⟩/SIKRIT`⟩ — public, MIT |
-| Live demo | ⟨GitHub Pages / Vercel URL⟩ (talks to the devnet program) · local demo: `cd app && npm run localnet` |
+| Live demo | ⟨Vercel URL⟩ — devnet; fees paid by the relayer service, so visitors need no wallet and no test SOL · local demo: `cd app && npm run localnet` |
 | Program (devnet) | [`FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F`](https://explorer.solana.com/address/FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F?cluster=devnet) |
 | A full inheritance on devnet | capsule [`5RR3sGRBZwdXAV6SMLFUzzGksMzuigmaLMEMNVCxjX9i`](https://explorer.solana.com/address/5RR3sGRBZwdXAV6SMLFUzzGksMzuigmaLMEMNVCxjX9i?cluster=devnet): 6 transactions (create → heartbeat → trigger → 2 confirms → claim); its owner's wallet `BvmZmRgnuy6y8tWdTbRPdPDC5jsFfhEm3cMsEnkxTBSW` has never been on-chain |
 | Presentation video (2–3 min) | ⟨YouTube/Loom link⟩ — script: `docs/VIDEO-SCRIPT.md` §1 |
@@ -156,7 +158,7 @@ Results — fill in with real answers only:
 - [ ] Registered on colosseum.com for **Crypto World's Fair** (every team member)
 - [ ] Repo pushed and **public**; README renders; `LICENSE` present
 - [x] Program deployed to devnet; program ID + explorer link in README (`docs/` mentions updated) — done 1 Oct by the loop
-- [ ] Live demo URL works (GitHub Pages / Vercel)
+- [ ] Live demo URL works (Vercel, with `RELAYER_SECRET_KEY` set — see PROGRESS.md "BUTUH BANG IGAN"): create a capsule as Pak Arif without any wallet
 - [ ] Pitch video (≤ 3:00) and demo video (≤ 3:00) uploaded (unlisted is fine); links pasted above and in the form
 - [ ] Deck PDF regenerated if anything changed (`cd app && npm run deck`)
 - [ ] Demand validation filled with real interviews (§8)

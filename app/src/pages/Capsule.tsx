@@ -4,9 +4,8 @@ import { useMemo, useState } from "react";
 
 import { CapsuleVitals } from "../components/CapsuleVitals";
 import { ActionButton, AddressLink, Heading, Notice, TxLink } from "../components/ui";
-import { relayerKeypair } from "../lib/actors";
 import { who } from "../lib/capsule";
-import { sendWithRelayer } from "../lib/chain";
+import { sendRelayed } from "../lib/relayer";
 import { hex, short, when } from "../lib/format";
 import { useAction, useCapsule, useChainNow } from "../lib/hooks";
 
@@ -47,7 +46,7 @@ export function CapsulePage({ address }: { address: string }) {
                 disabled={!t?.canTrigger}
                 onClick={() =>
                   action.run("Opening claim", async () => {
-                    const { signature } = await sendWithRelayer([triggerClaimIx({ capsule: key })], relayerKeypair());
+                    const { signature } = await sendRelayed([triggerClaimIx({ capsule: key })]);
                     setLastTx(signature);
                     refresh();
                   })

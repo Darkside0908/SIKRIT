@@ -88,6 +88,27 @@ karena faucet publik devnet menolak top-up dari browser, lalu mengembalikan sisa
 `getProgramAccounts` dengan ketat: discovery guardian sengaja satu query per polling (bukan satu per slot), dan polling
 berhenti saat tab tersembunyi. Untuk demo publik yang ramai, build dengan `VITE_RPC_URL=<RPC khusus>`.
 
+## Relayer service (`app/api/relay.ts`)
+
+Semua fee (dan rent kapsul baru) dibayar relayer, bukan wallet pemilik. App mencari relayer service di `api/relay`
+(relatif terhadap halaman) satu kali per load; kalau tidak ada yang menjawab JSON, app memakai relayer in-browser
+(kunci demo di localStorage, top-up dari faucet), misalnya di GitHub Pages.
+
+| Tempat | Relayer |
+|---|---|
+| `npm run localnet` / `npm run e2e` (`vite dev`) | service, kunci baru tiap start, otomatis diisi faucet localnet |
+| `npm run e2e:devnet` (`vite preview`) | service, kunci baru didanai 0,1 SOL dari wallet loop lalu di-sweep; `RELAYER=browser` → in-browser |
+| Vercel (Root Directory `app`) | service: function `api/relay.ts`, kunci dari env `RELAYER_SECRET_KEY` |
+| GitHub Pages | in-browser (tidak ada function) — pengunjung butuh SOL devnet dari faucet |
+
+Kebijakan tanda tangan (tepat satu instruksi SIKRIT, relayer hanya fee payer + payer rent `create_capsule`, semua
+tanda tangan lain diverifikasi, preflight aktif, batas per IP) dan risikonya ada di security review §7. Env server:
+`RELAYER_SECRET_KEY` (array JSON seperti keluaran `solana-keygen`, **jangan** diberi prefiks `VITE_`), `RPC_URL`
+(opsional; default RPC publik devnet — RPC privat aman di sini karena tidak pernah sampai ke browser).
+
+Catatan: `vite.config.ts` mengimpor `api/relay.ts`, jadi mengedit file itu me-restart dev server (dan me-reload
+halaman). Jangan mengeditnya saat E2E berjalan.
+
 ## Biaya compute (LiteSVM, binary SBF asli)
 
 | Instruksi | Compute units |

@@ -11,5 +11,8 @@
     "resolveJsonModule": true,
     "skipLibCheck": true
   },
-  "include": ["tests/**/*.ts", "sdk/**/*.ts"]
+  "include": ["tests/**/*.ts", "sdk/**/*.ts"],
+  "ts-node": {
+    "ignore": ["(?:^|/)node_modules/", "(?:^|/)app/api/"]
+  }
 }

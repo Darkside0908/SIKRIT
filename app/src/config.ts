@@ -13,6 +13,12 @@ export const RPC_URL: string =
 /** Demo cast (in-browser persona wallets). On by default; `VITE_DEMO=false` hides it. */
 export const DEMO_ENABLED = env.VITE_DEMO !== "false";
 
+/**
+ * Relayer service that pays every fee (app/api/relay.ts). Relative by default, so a Vercel deployment and
+ * `vite dev`/`vite preview` find their own; where nothing answers (GitHub Pages), a demo key in the browser pays.
+ */
+export const RELAYER_URL: string = env.VITE_RELAYER_URL || "api/relay";
+
 export function explorerTx(signature: string): string {
   return `https://explorer.solana.com/tx/${signature}${explorerCluster()}`;
 }

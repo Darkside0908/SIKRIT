@@ -9,9 +9,10 @@ import { ActingAs } from "../components/Shell";
 import { ActionButton, Copyable, Field, Heading, Notice, Stat, StatusChip } from "../components/ui";
 import { Countdown, Ecg, Seal, Vital } from "../components/visuals";
 import { CLUSTER } from "../config";
-import { Actor, CAST, personaActor, relayerKeypair } from "../lib/actors";
+import { Actor, CAST, personaActor } from "../lib/actors";
 import { who } from "../lib/capsule";
-import { SentTransaction, ensureFunded, sendWithRelayer } from "../lib/chain";
+import { SentTransaction, sendWithRelayer } from "../lib/chain";
+import { getRelayer, sendRelayed, useRelayer } from "../lib/relayer";
 import { duration, hex, short, when } from "../lib/format";
 import { useAction, useCapsule, useChainNow } from "../lib/hooks";
 import { useActor } from "../lib/identity";
@@ -191,8 +192,9 @@ function CreateWizard({
       });
       config.shareHashes = sealed.shareHashes;
       const proof = liveness.proveRegistration(secret, PROGRAM_ID, address, config);
-      const relayer = relayerKeypair();
-      await ensureFunded(relayer.publicKey, 0.05, CLUSTER === "devnet" ? 1 : 5);
+      // The relayer also pays the new capsule's rent (~0.004 SOL), hence the larger top-up for a browser relayer.
+      const relayer = await getRelayer();
+      await relayer.ready(0.05);
       const sent = await sendWithRelayer([createCapsuleIx({ payer: relayer.publicKey, commitment, config, proof })], relayer);
       postKit(address.toBase58(), kit.encodeKit(sealed));
       setPlaintext("");
@@ -383,14 +385,13 @@ function Dashboard({
   const action = useAction();
   const mailbox = useMailbox();
   const [beats, setBeats] = useState(0);
+  const relayer = useRelayer();
   const t = now !== undefined ? timeline(capsule, now) : undefined;
-  const relayer = relayerKeypair();
 
   const heartbeat = () =>
     action.run("Proving", async () => {
       const proof = liveness.proveLiveness(secret, PROGRAM_ID, address, capsule.heartbeatNonce);
-      await ensureFunded(relayer.publicKey, 0.01, CLUSTER === "devnet" ? 1 : 5);
-      onSent(await sendWithRelayer([heartbeatIx({ capsule: address, proof })], relayer));
+      onSent(await sendRelayed([heartbeatIx({ capsule: address, proof })]));
       setBeats((b) => b + 1);
     });
 
@@ -438,7 +439,10 @@ function Dashboard({
                 onClick={heartbeat}
               />
             )}
-            <span className="text-xs text-bone-500">Proof generated in your browser · relayed by {short(relayer.publicKey)}</span>
+            <span className="text-xs text-bone-500">
+              Proof generated in your browser · relayed by {relayer ? short(relayer.publicKey) : "…"}
+              {relayer?.kind === "service" && " (relayer service)"}
+            </span>
           </div>
         </div>
         <Ecg vital={vital} beatKey={beats} className="-mt-2" />
@@ -449,7 +453,7 @@ function Dashboard({
           sent={sent}
           known={[
             { address, label: "Your capsule (derived from P)" },
-            { address: relayer.publicKey, label: "Relayer · fee payer" },
+            { address: sent.transaction.feePayer!, label: "Relayer · fee payer" },
           ]}
           absent={[{ address: actor.publicKey, label: `Your wallet (${actor.name})` }]}
         />

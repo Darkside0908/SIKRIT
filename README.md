@@ -94,7 +94,7 @@ stateDiagram-v2
 | `create_capsule` / other instructions | ~69k CU / ~7k CU |
 | Cost of a heartbeat | 5,000 lamports. 30 years of weekly heartbeats ≈ **0.0078 SOL**. No token |
 | Owner wallets in capsule transactions | **0 of 6**, checked on-chain by the E2E test |
-| Tests | 63 TypeScript (LiteSVM lifecycle + SDK + client) · 10 Rust unit · 12-step browser E2E on localnet and devnet |
+| Tests | 68 TypeScript (LiteSVM lifecycle + SDK + client + relayer) · 10 Rust unit · 12-step browser E2E on localnet and devnet |
 
 ## Try it locally (~5 minutes)
 
@@ -111,8 +111,12 @@ The demo casts five in-browser wallets (Pak Arif the owner, his daughter Sari, g
 relayer pays every fee, so one person can play the whole family in one tab. Real wallets (Phantom, Solflare,
 Backpack via Wallet Standard) work for every role. Timers can be as short as one minute, the program's minimum.
 
+The relayer is a small service, [`app/api/relay.ts`](app/api/relay.ts): the dev server runs it locally, and on Vercel
+it deploys as a serverless function (set `RELAYER_SECRET_KEY` to a funded devnet keypair). It signs only single SIKRIT
+instructions, as fee payer and as a new capsule's rent payer, so its key can't be used to move its SOL anywhere else.
+
 ```bash
-npm test                # 63 tests: lifecycle on the real SBF binary with a time-travelling clock, SDK vectors, client
+npm test                # 68 tests: lifecycle on the real SBF binary with a time-travelling clock, SDK vectors, client, relayer
 npm run test:rust       # verifier unit tests, incl. a known-answer vector shared with the TypeScript prover
 npm run typecheck
 ```
@@ -127,6 +131,7 @@ sdk/shamir.ts                Shamir over GF(2^8), wrapping an audited library
 sdk/kit.ts                   capsule kit: seal, verify against the chain, release, recover
 sdk/client.ts                dependency-light program client (no Anchor in the browser)
 app/                         demo app: Vite + React + Tailwind + wallet adapter
+app/api/relay.ts             relayer service (Vercel function / dev server): pays fees for SIKRIT instructions only
 app/e2e/demo-flow.mjs        end-to-end test in Chrome + on-chain privacy check
 tests/                       LiteSVM lifecycle tests, SDK tests (RFC 9180 and FIPS-197 vectors, attacks on the kit)
 docs/                        pitch, research, technical spec, security review, deck, video scripts, submission kit

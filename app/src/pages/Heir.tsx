@@ -10,9 +10,10 @@ import { KitImport } from "../components/KitImport";
 import { ActingAs } from "../components/Shell";
 import { ActionButton, Heading, Notice, TxLink } from "../components/ui";
 import { Seal } from "../components/visuals";
-import { Actor, relayerKeypair } from "../lib/actors";
+import type { Actor } from "../lib/actors";
 import { useInbox, useVerifiedKit, who } from "../lib/capsule";
-import { connection, sendWithRelayer } from "../lib/chain";
+import { connection } from "../lib/chain";
+import { sendRelayed } from "../lib/relayer";
 import { useAction, useCapsule, useChainNow, usePolling } from "../lib/hooks";
 import { useActor } from "../lib/identity";
 import { decodeRelease, useMailbox } from "../lib/mailbox";
@@ -79,9 +80,9 @@ function HeirCapsule({
   const action = useAction();
   const [lastTx, setLastTx] = useState<string>();
 
-  const send = (label: string, build: () => Parameters<typeof sendWithRelayer>[0], cosign?: Actor) =>
+  const send = (label: string, build: () => Parameters<typeof sendRelayed>[0], cosign?: Actor) =>
     action.run(label, async () => {
-      const { signature } = await sendWithRelayer(build(), relayerKeypair(), cosign);
+      const { signature } = await sendRelayed(build(), cosign);
       setLastTx(signature);
       live.refresh();
       onChange();

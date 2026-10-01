@@ -9,9 +9,10 @@ import { InboxCard } from "../components/InboxCard";
 import { KitImport } from "../components/KitImport";
 import { ActingAs } from "../components/Shell";
 import { ActionButton, Copyable, Heading, Notice, TxLink } from "../components/ui";
-import { Actor, relayerKeypair } from "../lib/actors";
+import type { Actor } from "../lib/actors";
 import { chainState, useInbox, useVerifiedKit, who } from "../lib/capsule";
-import { connection, sendWithRelayer } from "../lib/chain";
+import { connection } from "../lib/chain";
+import { sendRelayed } from "../lib/relayer";
 import { useAction, useCapsule, useChainNow, usePolling } from "../lib/hooks";
 import { useActor } from "../lib/identity";
 import { encodeRelease, postRelease, useMailbox } from "../lib/mailbox";
@@ -82,9 +83,9 @@ function GuardianCapsule({
   const approved = slot >= 0 && Boolean(capsule.approvals & (1 << slot));
   const vetoed = slot >= 0 && Boolean(capsule.vetoes & (1 << slot));
 
-  const send = (label: string, instructions: Parameters<typeof sendWithRelayer>[0], cosign?: Actor) =>
+  const send = (label: string, instructions: Parameters<typeof sendRelayed>[0], cosign?: Actor) =>
     action.run(label, async () => {
-      const { signature } = await sendWithRelayer(instructions, relayerKeypair(), cosign);
+      const { signature } = await sendRelayed(instructions, cosign);
       setLastTx(signature);
       live.refresh();
       onChange();

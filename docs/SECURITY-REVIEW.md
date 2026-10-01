@@ -1,6 +1,6 @@
 # SIKRIT — Security & Code Review (`programs/sikrit`)
 
-> **Scope:** `programs/sikrit/src/lib.rs` versi awal (draft v0.1), konfigurasi build (`Anchor.toml`, `Cargo.toml`), desain kriptografi Schnorr proof-of-liveness, dan (sejak 30 Sep malam) protokol custody share di SDK client (`sdk/hpke.ts`, `sdk/shamir.ts`, `sdk/kit.ts`) — lihat §5.
+> **Scope:** `programs/sikrit/src/lib.rs` versi awal (draft v0.1), konfigurasi build (`Anchor.toml`, `Cargo.toml`), desain kriptografi Schnorr proof-of-liveness, dan (sejak 30 Sep malam) protokol custody share di SDK client (`sdk/hpke.ts`, `sdk/shamir.ts`, `sdk/kit.ts`) — lihat §5; frontend (§6) dan relayer service `app/api/relay.ts` (§7).
 > **Tanggal:** 30 September 2026 · **Metode:** review manual (kriptografi + keamanan smart contract), kompilasi SBF nyata, 10 unit test Rust, 35 test integrasi TypeScript di LiteSVM dengan time-travel, dan benchmark compute unit.
 > **Hasil:** 18 temuan — 3 Critical, 4 High, 4 Medium, 6 Low, 1 Info (desain). Tujuh belas sudah diperbaiki di kode; SIK-11 dimitigasi di client (urutan release tetap janji guardian, bukan paksaan kriptografis). SIK-16/17 berasal dari audit akhir frontend, SIK-18 dari E2E pertama melawan devnet (§6).
 
@@ -309,15 +309,45 @@ sebelumnya masih berjalan atau tab tersembunyi; badge relayer tidak lagi memangg
 
 ---
 
-## 7. Cara Mereproduksi
+## 7. Relayer Service (`app/api/relay.ts`, 1 Okt 2026)
+
+Demo hosted di devnet tidak bisa bergantung pada faucet publik (hampir selalu menolak top-up dari browser), jadi fee
+dibayar oleh relayer service: satu handler Node yang di-deploy Vercel sebagai function dan di-mount `vite dev`/`vite
+preview` (kode yang sama dites E2E). App mendeteksinya lewat `GET /api/relay`; di host statis (GitHub Pages) app jatuh
+kembali ke relayer in-browser. Ini juga wujud nyata "relayer" dalam cerita privasi: heartbeat pemilik sampai ke chain
+dengan service ini sebagai satu-satunya fee payer.
+
+**Model ancaman:** siapa pun di internet bisa POST transaksi. Aset: SOL relayer, ketersediaan demo, privasi pengirim.
+
+| Kontrol | Mencegah | Test |
+|---|---|---|
+| Hanya transaksi legacy dengan fee payer = relayer, **tepat satu** instruksi, program = SIKRIT, discriminator dikenal (sama dengan SDK) | Relayer dipakai sebagai fee payer serba guna; instruksi kedua yang menumpang | *refuses every transaction…*, *knows the same instructions as the SDK…* |
+| Kunci relayer hanya boleh muncul di akun instruksi sebagai `payer` (slot 1) `create_capsule` | Tanda tangan relayer mengotorisasi hal lain: `SystemProgram.transfer` dari relayer (pengurasan), relayer sebagai guardian | *refuses every transaction…* (transfer System, relayer-sebagai-guardian) |
+| Semua tanda tangan lain diverifikasi sebelum kirim; preflight aktif | Membakar fee lewat transaksi yang pasti gagal | *refuses…* (co-signature hilang), *hands program errors back…* (422 + log, app tetap bisa menamai error) |
+| Batas per klien: 10 transaksi/menit, 6 kapsul baru/jam (memori per instance; peta klien dipangkas) | Pengurasan rent lewat spam `create_capsule` dari satu alamat | *rate-limits each client…* |
+| Kunci hanya di env server (`RELAYER_SECRET_KEY`, bukan `VITE_`), tidak pernah ke browser; bundle produksi dicek bebas kode relay | Kebocoran kunci lewat bundle | pemeriksaan bundle `dist/` |
+| Saldo di bawah 0,01 SOL → 503 berisi alamat relayer | Kegagalan bisu saat relayer habis | *rate-limits…* (relayer tanpa saldo) |
+
+Hasil: tidak ada temuan pada kode yang dirilis. (Satu penguatan sebelum rilis: peta rate-limit semula hanya dipangkas
+per klien, sehingga banyak alamat berbeda bisa membuatnya tumbuh tanpa batas di instance yang hidup lama.) Risiko yang
+tersisa dicatat sebagai R18.
+
+| # | Risiko | Detail & mitigasi |
+|---|---|---|
+| R18 | Relayer = titik pengamatan & pembayaran | (a) Operator relayer melihat IP dan waktu setiap heartbeat beserta kapsulnya, eksposur yang sama dengan node RPC bila browser mengirim langsung, tapi kini terkumpul di satu operator. Mitigasi: jalankan relayer sendiri (handler mandiri, ±200 baris), Tor/VPN, roadmap beberapa relayer. (b) Penyerang dengan banyak IP bisa menguras rent relayer devnet (~0,0037 SOL per kapsul); dampaknya demo berhenti sampai diisi ulang, tanpa dana pengguna yang berisiko. Mainnet: rent dibayar pembuat kapsul lewat voucher prabayar / burner, atau dikembalikan lewat `close` (R7). (c) Di luar Vercel, `x-forwarded-for` bisa dipalsukan untuk mengakali batas per klien. |
+
+---
+
+## 8. Cara Mereproduksi
 
 ```bash
 npm run build                # anchor build: SBF + IDL (Solana 1.18.17, Anchor CLI 0.30.2)
 npm run test:rust            # 10 unit test verifier Schnorr + validasi config
-npm test                     # 63 test: lifecycle di LiteSVM + SDK + client (Node 24 LTS)
+npm test                     # 68 test: lifecycle di LiteSVM + SDK + client + relayer service (Node 24 LTS)
 npm run typecheck
 cd app && npm run e2e        # E2E Chrome: seluruh cerita warisan + cek privasi on-chain (SIK-16)
-cd app && npm run e2e:devnet # cerita yang sama lewat bundle produksi melawan program di devnet (SIK-18)
+cd app && npm run e2e:devnet # cerita yang sama lewat bundle produksi + relayer service melawan devnet (SIK-18, §7)
+RELAYER=browser npm run e2e:devnet  # sama, dengan relayer in-browser (fallback GitHub Pages)
 ```
 
 Detail toolchain ada di `docs/DEVELOPMENT.md`.

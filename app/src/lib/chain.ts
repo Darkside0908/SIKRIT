@@ -1,6 +1,5 @@
 import {
   Connection,
-  Keypair,
   LAMPORTS_PER_SOL,
   PublicKey,
   SYSVAR_CLOCK_PUBKEY,
@@ -28,6 +27,12 @@ export interface Cosigner {
   signTransaction(tx: Transaction): Promise<Transaction>;
 }
 
+/** Whoever pays the fees (see relayer.ts): adds the fee payer's signature and broadcasts. */
+export interface FeePayer {
+  publicKey: PublicKey;
+  submit(transaction: Transaction): Promise<string>;
+}
+
 export interface SentTransaction {
   signature: string;
   /** Exactly what was broadcast — shown in the "what the chain sees" inspector. */
@@ -41,14 +46,13 @@ export interface SentTransaction {
  */
 export async function sendWithRelayer(
   instructions: TransactionInstruction[],
-  relayer: Keypair,
+  relayer: FeePayer,
   cosigner?: Cosigner,
 ): Promise<SentTransaction> {
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
   let transaction = new Transaction({ feePayer: relayer.publicKey, blockhash, lastValidBlockHeight }).add(...instructions);
   if (cosigner) transaction = await cosigner.signTransaction(transaction);
-  transaction.partialSign(relayer);
-  const signature = await connection.sendRawTransaction(transaction.serialize(), { preflightCommitment: "confirmed" });
+  const signature = await relayer.submit(transaction);
   const { value } = await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, "confirmed");
   if (value.err) throw new Error(`Transaction failed: ${JSON.stringify(value.err)}`);
   window.dispatchEvent(new Event(RELAYER_EVENT));
