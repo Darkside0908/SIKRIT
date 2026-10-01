@@ -8,10 +8,11 @@
  *   e     = SHA-512(domain ‖ program_id ‖ capsule ‖ P ‖ R ‖ context) mod ℓ
  *   proof = (R = k·G, s = k + e·x mod ℓ)          verifier: s·G − e·P == R
  *
- * `context` is the capsule's `heartbeat_nonce` (u64 LE) for liveness proofs, or the Borsh
- * encoding of `CapsuleConfig` for the proof-of-possession sent with `create_capsule`.
+ * `context` is the capsule's `heartbeat_nonce` (u64 LE) ‖ `expires_at` (i64 LE) for liveness proofs,
+ * or the Borsh encoding of `CapsuleConfig` for the proof-of-possession sent with `create_capsule`.
  */
 import { ed25519 } from "@noble/curves/ed25519";
+import { sha256 } from "@noble/hashes/sha256";
 import { sha512 } from "@noble/hashes/sha512";
 import { concatBytes, randomBytes, utf8ToBytes } from "@noble/hashes/utils";
 import { PublicKey } from "@solana/web3.js";
@@ -22,8 +23,18 @@ const Point = ed25519.Point;
 export const L = ed25519.CURVE.n;
 
 export const CAPSULE_SEED = utf8ToBytes("capsule");
-export const REGISTER_DOMAIN = utf8ToBytes("SIKRIT:register:v1");
-export const LIVENESS_DOMAIN = utf8ToBytes("SIKRIT:liveness:v1");
+export const REGISTER_DOMAIN = utf8ToBytes("SIKRIT:register:v2");
+export const LIVENESS_DOMAIN = utf8ToBytes("SIKRIT:liveness:v2");
+export const MEMBER_DOMAIN = utf8ToBytes("SIKRIT:member:v1");
+
+/** The program refuses liveness proofs that expire more than this far ahead (seconds). */
+export const MAX_PROOF_LIFETIME = 3600n;
+/** Lifetime the app gives a heartbeat proof: ample for a relayer, useless to anyone who holds it back. */
+export const DEFAULT_PROOF_LIFETIME = 600n;
+
+/** Role byte of a member commitment (`ROLE_HEIR` / `ROLE_GUARDIAN` on-chain). */
+export const MemberRole = { heir: 0, guardian: 1 } as const;
+export type MemberRole = (typeof MemberRole)[keyof typeof MemberRole];
 const NONCE_DOMAIN = utf8ToBytes("SIKRIT:nonce:v1");
 const KEYGEN_DOMAIN = utf8ToBytes("SIKRIT:keygen:v1");
 
@@ -38,12 +49,15 @@ export interface SchnorrProof {
   s: number[];
 }
 
-/** Matches the Anchor `CapsuleConfig` argument type (numbers are i64 seconds). */
+/**
+ * Matches the Anchor `CapsuleConfig` argument type (numbers are i64 seconds). Heir and guardians appear only as
+ * member commitments (`memberCommitment`), never as wallets.
+ */
 export interface CapsuleConfigInput {
-  heir: PublicKey;
+  heirCommitment: Uint8Array;
   heartbeatInterval: bigint;
   gracePeriod: bigint;
-  guardians: PublicKey[];
+  guardianCommitments: Uint8Array[];
   guardianThreshold: number;
   shareHashes: Uint8Array[];
 }
@@ -134,21 +148,40 @@ export function challenge(
   );
 }
 
-/** `heartbeat_nonce` as u64 little-endian — the liveness proof context. */
-export function livenessContext(nonce: bigint | number): Uint8Array {
-  return numberToBytesLE(BigInt(nonce), 8);
+const i64 = (n: bigint): Uint8Array => numberToBytesLE(BigInt.asUintN(64, n), 8);
+
+/** `heartbeat_nonce` (u64 LE) ‖ `expires_at` (i64 LE) — the liveness proof context. */
+export function livenessContext(nonce: bigint | number, expiresAt: bigint | number): Uint8Array {
+  return concatBytes(numberToBytesLE(BigInt(nonce), 8), i64(BigInt(expiresAt)));
+}
+
+/**
+ * Salted commitment to a capsule member, identical to `member_commitment` on-chain:
+ * SHA-256("SIKRIT:member:v1" ‖ P ‖ role ‖ wallet ‖ salt). With a fresh random 32-byte salt per member it hides
+ * the wallet (no guessing through every Solana address) and does not link the same person across capsules.
+ */
+export function memberCommitment(
+  commitment: Uint8Array,
+  role: MemberRole,
+  wallet: PublicKey | Uint8Array,
+  salt: Uint8Array,
+): Uint8Array {
+  const walletBytes = wallet instanceof PublicKey ? wallet.toBytes() : wallet;
+  if (commitment.length !== 32 || walletBytes.length !== 32 || salt.length !== 32) {
+    throw new Error("liveness: member commitment inputs must be 32 bytes each");
+  }
+  return sha256(concatBytes(MEMBER_DOMAIN, commitment, Uint8Array.of(role), walletBytes, salt));
 }
 
 /** Borsh encoding of `CapsuleConfig` — the proof-of-possession context. */
 export function encodeCapsuleConfig(config: CapsuleConfigInput): Uint8Array {
   const u32 = (n: number) => numberToBytesLE(BigInt(n), 4);
-  const i64 = (n: bigint) => numberToBytesLE(BigInt.asUintN(64, n), 8);
   return concatBytes(
-    config.heir.toBytes(),
+    config.heirCommitment,
     i64(config.heartbeatInterval),
     i64(config.gracePeriod),
-    u32(config.guardians.length),
-    ...config.guardians.map((g) => g.toBytes()),
+    u32(config.guardianCommitments.length),
+    ...config.guardianCommitments,
     Uint8Array.of(config.guardianThreshold),
     u32(config.shareHashes.length),
     ...config.shareHashes,
@@ -187,15 +220,19 @@ export function prove(
   return { r: Array.from(r), s: Array.from(numberToBytesLE(s)) };
 }
 
-/** Heartbeat proof for the capsule's current `heartbeat_nonce`. */
+/**
+ * Heartbeat proof for the capsule's current `heartbeat_nonce`, valid until `expiresAt` (cluster unix time; the
+ * program accepts it only while `now ≤ expiresAt ≤ now + MAX_PROOF_LIFETIME`).
+ */
 export function proveLiveness(
   x: bigint,
   programId: PublicKey,
   capsule: PublicKey,
   nonce: bigint | number,
+  expiresAt: bigint | number,
   aux?: Uint8Array,
 ): SchnorrProof {
-  return prove(x, programId, LIVENESS_DOMAIN, capsule, livenessContext(nonce), aux);
+  return prove(x, programId, LIVENESS_DOMAIN, capsule, livenessContext(nonce, expiresAt), aux);
 }
 
 /** Proof-of-possession for `create_capsule`, bound to the full capsule configuration. */

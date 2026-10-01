@@ -1,4 +1,4 @@
-import { CapsuleAccount, findCapsulesByGuardian, guardianConfirmIx, guardianVetoIx, timeline, triggerClaimIx } from "@sdk/client";
+import { CapsuleAccount, guardianConfirmIx, guardianVetoIx, timeline, triggerClaimIx } from "@sdk/client";
 import * as kit from "@sdk/kit";
 import { bytesToHex } from "@noble/hashes/utils";
 import { PublicKey } from "@solana/web3.js";
@@ -10,10 +10,9 @@ import { KitImport } from "../components/KitImport";
 import { ActingAs } from "../components/Shell";
 import { ActionButton, Copyable, Heading, Notice, TxLink } from "../components/ui";
 import type { Actor } from "../lib/actors";
-import { chainState, useInbox, useVerifiedKit, who } from "../lib/capsule";
-import { connection } from "../lib/chain";
+import { chainState, importMemberKit, useInbox, useMemberCapsules, useVerifiedKit, who } from "../lib/capsule";
 import { sendRelayed } from "../lib/relayer";
-import { useAction, useCapsule, useChainNow, usePolling } from "../lib/hooks";
+import { useAction, useCapsule, useChainNow } from "../lib/hooks";
 import { useActor } from "../lib/identity";
 import { encodeRelease, postRelease, useMailbox } from "../lib/mailbox";
 
@@ -24,7 +23,7 @@ export function GuardianPage() {
   const { inbox, create } = useInbox(actor);
   const action = useAction();
   const key = actor?.publicKey.toBase58();
-  const list = usePolling(actor ? () => findCapsulesByGuardian(connection, actor.publicKey) : undefined, [key]);
+  const capsules = useMemberCapsules(actor, "guardian");
 
   return (
     <div className="space-y-10">
@@ -42,60 +41,80 @@ export function GuardianPage() {
       <div className="grid gap-6 lg:grid-cols-[22rem_1fr]">
         <InboxCard actor={actor} inbox={inbox} busy={action.busy} audience="the owner" onCreate={() => action.run("Creating", create)} />
         <div className="space-y-6">
-          {list.error && <Notice tone="error">{list.error}</Notice>}
-          {list.value === undefined && actor && <div className="card p-6 text-bone-400">Searching the chain for capsules you guard…</div>}
-          {list.value?.length === 0 && (
-            <div className="card ledger p-8 text-bone-300">
+          {capsules?.length === 0 && (
+            <div className="card ledger space-y-4 p-8 text-bone-300">
               <p className="font-display text-2xl text-bone-100">You are not guarding any capsule yet.</p>
-              <p className="mt-2 text-sm text-bone-400">When an owner lists your wallet as a guardian, the capsule appears here.</p>
+              <p className="text-sm text-bone-400">
+                The chain does not name guardians, only salted commitments to them, so nobody can look you up there.
+                Your capsules arrive with the kit their owner sends you.
+              </p>
             </div>
           )}
           {/* Keyed by guardian too: several guardians share a capsule, and none may inherit another's UI state. */}
-          {list.value?.map(({ address, capsule }) => (
-            <GuardianCapsule key={`${key}:${address.toBase58()}`} address={address} initial={capsule} actor={actor!} inbox={inbox} onChange={list.refresh} />
-          ))}
+          {actor &&
+            capsules?.map(({ address }) => (
+              <GuardianCapsule key={`${key}:${address.toBase58()}`} address={address} actor={actor} inbox={inbox} />
+            ))}
+          {actor && (
+            <KitImport
+              message="Received a kit file from an owner? Import it to watch that capsule."
+              onImport={(text) => void action.run("Importing", () => importMemberKit(text, actor.publicKey))}
+            />
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-function GuardianCapsule({
+function GuardianCapsule({ address, actor, inbox }: { address: PublicKey; actor: Actor; inbox: Inbox }) {
+  const { capsule, error, refresh } = useCapsule(address);
+  if (capsule === undefined && error) return <Notice tone="error">Capsule {address.toBase58()}: {error}</Notice>;
+  if (capsule === undefined) return <div className="card p-6 text-bone-400">Loading capsule…</div>;
+  if (capsule === null) return <Notice tone="warn">The capsule of this kit does not exist on this cluster.</Notice>;
+  return <GuardianCapsuleView address={address} capsule={capsule} actor={actor} inbox={inbox} onChange={refresh} />;
+}
+
+function GuardianCapsuleView({
   address,
-  initial,
+  capsule,
   actor,
   inbox,
   onChange,
 }: {
   address: PublicKey;
-  initial: CapsuleAccount;
+  capsule: CapsuleAccount;
   actor: Actor;
   inbox: Inbox;
   onChange: () => void;
 }) {
-  const live = useCapsule(address);
-  const capsule = live.capsule ?? initial;
   const now = useChainNow();
   const t = now !== undefined ? timeline(capsule, now) : undefined;
   const action = useAction();
   const [lastTx, setLastTx] = useState<string>();
-  const slot = capsule.guardians.findIndex((g) => g.equals(actor.publicKey));
+  const verified = useVerifiedKit(address, capsule);
+  const member = verified.checked.kit && kit.membership(verified.checked.kit, actor.publicKey.toBytes());
+  const slot = member?.role === "guardian" ? member.slot : -1;
   const approved = slot >= 0 && Boolean(capsule.approvals & (1 << slot));
   const vetoed = slot >= 0 && Boolean(capsule.vetoes & (1 << slot));
+  const heirName = verified.checked.kit ? who(verified.checked.kit.shares[0].holder.wallet) : "the heir";
 
   const send = (label: string, instructions: Parameters<typeof sendRelayed>[0], cosign?: Actor) =>
     action.run(label, async () => {
       const { signature } = await sendRelayed(instructions, cosign);
       setLastTx(signature);
-      live.refresh();
       onChange();
     });
+  // Opening the commitment reveals this wallet as a guardian of this capsule: only ever done to act on a claim.
+  const opening = member && { capsule: address, guardian: actor.publicKey, slot: member.slot, salt: member.salt };
 
   return (
     <article className="space-y-4 animate-rise">
       {action.error && <Notice tone="error" onClose={action.clearError}>{action.error}</Notice>}
       <CapsuleVitals address={address} capsule={capsule}>
-        <span className="text-right text-xs text-bone-500">heir: {who(capsule.heir)} · you are guardian #{slot + 1}</span>
+        <span className="text-right text-xs text-bone-500">
+          heir: {heirName} · you are guardian #{slot + 1} · sealed on-chain
+        </span>
         {capsule.status === "active" && t?.canTrigger && (
           <ActionButton
             busy={action.busy}
@@ -104,7 +123,7 @@ function GuardianCapsule({
             onClick={() => send("Opening claim", [triggerClaimIx({ capsule: address })])}
           />
         )}
-        {capsule.status === "claimPending" && (
+        {capsule.status === "claimPending" && opening && (
           <div className="flex flex-wrap justify-end gap-2">
             <ActionButton
               className="btn-ghost"
@@ -113,8 +132,8 @@ function GuardianCapsule({
               label={vetoed ? "Veto used" : "Veto — the owner is alive"}
               disabled={vetoed || !t?.canVeto}
               onClick={() => {
-                if (confirm("Veto only if you know the owner is alive. It resets their timer and uses your one veto until their next heartbeat.")) {
-                  void send("Vetoing", [guardianVetoIx({ capsule: address, guardian: actor.publicKey })], actor);
+                if (confirm("Veto only if you know the owner is alive. It resets their timer, uses your one veto until their next heartbeat, and shows on-chain that you guard this capsule.")) {
+                  void send("Vetoing", [guardianVetoIx(opening)], actor);
                 }
               }}
             />
@@ -123,21 +142,38 @@ function GuardianCapsule({
               busyLabel="Confirming"
               label={approved ? "Confirmed" : "Confirm the claim"}
               disabled={approved}
-              onClick={() => send("Confirming", [guardianConfirmIx({ capsule: address, guardian: actor.publicKey })], actor)}
+              onClick={() => send("Confirming", [guardianConfirmIx(opening)], actor)}
             />
           </div>
         )}
+        {capsule.status === "claimPending" && !opening && (
+          <span className="text-right text-xs text-seal-300">Confirming needs a verified kit (it holds your salt).</span>
+        )}
         {lastTx && <TxLink signature={lastTx} />}
       </CapsuleVitals>
-      <Release address={address} capsule={capsule} inbox={inbox} guardian={actor.publicKey} />
+      <Release address={address} capsule={capsule} inbox={inbox} guardian={actor.publicKey} heirName={heirName} verified={verified} />
     </article>
   );
 }
 
-function Release({ address, capsule, inbox, guardian }: { address: PublicKey; capsule: CapsuleAccount; inbox: Inbox; guardian: PublicKey }) {
+function Release({
+  address,
+  capsule,
+  inbox,
+  guardian,
+  heirName,
+  verified,
+}: {
+  address: PublicKey;
+  capsule: CapsuleAccount;
+  inbox: Inbox;
+  guardian: PublicKey;
+  heirName: string;
+  verified: ReturnType<typeof useVerifiedKit>;
+}) {
   const mailbox = useMailbox();
   const action = useAction();
-  const { kitText, checked, importKit } = useVerifiedKit(address, capsule);
+  const { kitText, checked, importKit } = verified;
   const token = mailbox.sent[`${address.toBase58()}:${guardian.toBase58()}`];
 
   const release = () =>
@@ -147,7 +183,7 @@ function Release({ address, capsule, inbox, guardian }: { address: PublicKey; ca
       const index = kit.findShareIndex(checked.kit, inbox.keyPair.publicKey);
       if (index < 0) throw new Error("This kit holds no share for your inbox key");
       const share = kit.openShare(checked.kit, index, inbox.keyPair.secretKey);
-      // Refuses unless the chain says Claimed, and seals only to the inbox the on-chain heir certified.
+      // Refuses unless the chain says Claimed, and seals only to the inbox the committed heir certified.
       const sealed = kit.releaseShare(checked.kit, share, chainState(capsule));
       postRelease(address.toBase58(), guardian.toBase58(), encodeRelease(address.toBase58(), bytesToHex(sealed)));
     });
@@ -167,14 +203,14 @@ function Release({ address, capsule, inbox, guardian }: { address: PublicKey; ca
         </p>
       ) : token ? (
         <>
-          <Notice tone="success">Released to {who(capsule.heir)}'s inbox (demo mailbox). Only their inbox key can open it.</Notice>
+          <Notice tone="success">Released to {heirName}'s inbox (demo mailbox). Only their inbox key can open it.</Notice>
           <Copyable text={token} display={`${token.slice(0, 40)}…`} />
         </>
       ) : (
         <>
           <p className="text-sm leading-relaxed text-bone-300">
-            The capsule is claimed. Re-seal your share to the inbox key certified by {who(capsule.heir)}'s wallet — the heir
-            registered on-chain.
+            The capsule is claimed by {heirName}, the heir the chain committed to. Re-seal your share to the inbox key
+            their wallet certified.
           </p>
           <ActionButton className="btn-seal" busy={action.busy} busyLabel="Releasing" label="Release my share to the heir" onClick={release} />
         </>

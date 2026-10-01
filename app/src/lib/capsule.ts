@@ -1,21 +1,78 @@
-import type { CapsuleAccount } from "@sdk/client";
+import { CapsuleAccount, PROGRAM_ID, fetchCapsule } from "@sdk/client";
 import * as kit from "@sdk/kit";
 import type { KeyPair } from "@sdk/hpke";
+import { capsulePda } from "@sdk/liveness";
 import { PublicKey } from "@solana/web3.js";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Actor, personaFor } from "./actors";
+import { connection } from "./chain";
 import { short } from "./format";
 import { postInvite, postKit, useMailbox } from "./mailbox";
 
 /** The capsule as a kit consumer checks it (sdk/kit.ts `CapsuleState`). */
 export const chainState = (capsule: CapsuleAccount): kit.CapsuleState => ({
   commitment: capsule.commitment,
-  heir: capsule.heir.toBytes(),
-  guardians: capsule.guardians.map((g) => g.toBytes()),
+  heirCommitment: capsule.heirCommitment,
+  guardianCommitments: capsule.guardianCommitments,
   shareHashes: capsule.shareHashes,
   claimed: capsule.status === "claimed",
+  heir: capsule.heir?.toBytes() ?? null,
 });
+
+/** Where a kit's capsule lives: its address derives from the liveness commitment P inside the kit. */
+export const kitAddress = (parsed: kit.CapsuleKit): PublicKey => capsulePda(PROGRAM_ID, parsed.commitment)[0];
+
+/** The kit in this browser's mailbox for `address`, parsed; undefined if there is none (or it is malformed). */
+export function useMailboxKit(address: PublicKey | undefined): kit.CapsuleKit | undefined {
+  const mailbox = useMailbox();
+  const text = address ? mailbox.kits[address.toBase58()] : undefined;
+  return useMemo(() => {
+    try {
+      return text ? kit.decodeKit(text) : undefined;
+    } catch {
+      return undefined;
+    }
+  }, [text]);
+}
+
+/**
+ * The capsules `actor` holds a share of as `role`, from the kits in this browser's mailbox. The chain stores only
+ * salted commitments to heirs and guardians, so members find their capsules through the kit the owner sent them,
+ * never by searching the chain for their wallet.
+ */
+export function useMemberCapsules(actor: Actor | undefined, role: kit.Membership["role"]) {
+  const mailbox = useMailbox();
+  const wallet = actor?.publicKey.toBase58();
+  return useMemo(() => {
+    if (!wallet) return undefined;
+    const found: { address: PublicKey; member: kit.Membership }[] = [];
+    for (const [address, text] of Object.entries(mailbox.kits)) {
+      try {
+        const member = kit.membership(kit.decodeKit(text), new PublicKey(wallet).toBytes());
+        if (member?.role === role) found.push({ address: new PublicKey(address), member });
+      } catch {
+        /* a malformed or older kit names nobody */
+      }
+    }
+    return found;
+  }, [mailbox.kits, wallet, role]);
+}
+
+/**
+ * A kit file a holder received outside this browser: accepted only if it holds a share for `wallet` and matches
+ * its capsule on-chain, then filed in the mailbox under that capsule.
+ */
+export async function importMemberKit(text: string, wallet: PublicKey): Promise<PublicKey> {
+  const parsed = kit.decodeKit(text);
+  if (!kit.membership(parsed, wallet.toBytes())) throw new Error(`This kit holds no share for ${short(wallet)}`);
+  const address = kitAddress(parsed);
+  const capsule = await fetchCapsule(connection, address);
+  if (!capsule) throw new Error(`The kit's capsule ${short(address)} does not exist on this cluster`);
+  kit.verifyKit(parsed, chainState(capsule));
+  postKit(address.toBase58(), text);
+  return address;
+}
 
 /**
  * The capsule's kit — from this browser's mailbox or an imported file — checked against the
@@ -54,7 +111,7 @@ export function useVerifiedKit(address: PublicKey, capsule: CapsuleAccount) {
   return { kitText, checked, importKit };
 }
 
-/** "Sari (7xK…p2)" for demo personas, the short address otherwise. */
+/** "Sari" for demo personas, the short address otherwise. */
 export function who(address: PublicKey | Uint8Array): string {
   const key = address instanceof PublicKey ? address : new PublicKey(address);
   const persona = personaFor(key);

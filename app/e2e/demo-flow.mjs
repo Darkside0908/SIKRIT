@@ -3,8 +3,10 @@
  * Pak Arif seals a seed phrase → ZK heartbeat → falls silent → Sari opens the claim →
  * Budi and Dewi confirm → grace period → Sari claims → guardians release → Sari recovers the seed.
  *
- * Afterwards it checks the privacy claim on the chain itself: the owner's wallet appears in none
- * of the capsule's transactions.
+ * Afterwards it checks the privacy claims on the chain itself: the owner's wallet appears in none of
+ * the capsule's transactions, and each family member appears only in the transaction where they act
+ * (Sari in the claim, Budi and Dewi in their confirmations), never in the capsule's data before that;
+ * Rizal, a guardian who never acts, appears nowhere.
  *
  *   BASE_URL     app under test        (default http://localhost:5173)
  *   RPC_URL      cluster it talks to   (default http://127.0.0.1:8899)
@@ -140,7 +142,8 @@ async function enabled(locator, timeout) {
 }
 
 let capsule;
-let owner;
+/** Demo personas by id (arif, sari, budi, dewi, rizal) → wallet. */
+let cast;
 
 try {
   await step("owner derives the liveness key from a wallet signature", async () => {
@@ -180,7 +183,13 @@ try {
       cast: JSON.parse(localStorage.getItem("sikrit:cast:v1") ?? "{}"),
     }));
     capsule = new PublicKey(Object.keys(state.mailbox.kits)[0]);
-    owner = Keypair.fromSecretKey(Buffer.from(state.cast.arif, "base64")).publicKey;
+    cast = Object.fromEntries(
+      Object.entries(state.cast).map(([id, secret]) => [id, Keypair.fromSecretKey(Buffer.from(secret, "base64")).publicKey]),
+    );
+    // Before anyone in the family has acted, the capsule's data names none of them.
+    const data = (await new Connection(RPC, "confirmed").getAccountInfo(capsule)).data;
+    const named = Object.entries(cast).filter(([, wallet]) => data.includes(wallet.toBuffer())).map(([id]) => id);
+    if (named.length) throw new Error(`capsule data names ${named.join(", ")} right after creation`);
   });
 
   await step("owner sends a ZK heartbeat; the inspector shows no owner wallet", async () => {
@@ -271,7 +280,7 @@ try {
     await dwell(3000, section("Not on-chain, anywhere"));
   });
 
-  await step("chain check: owner wallet absent from every capsule transaction", async () => {
+  await step("chain check: no owner wallet; each family member only where they act", async () => {
     const connection = new Connection(RPC, "confirmed");
     const service = await fetch(new URL("api/relay", `${BASE}/`))
       .then((response) => (response.ok ? response.json() : undefined))
@@ -280,13 +289,31 @@ try {
     const signatures = await connection.getSignaturesForAddress(capsule);
     // create, heartbeat, trigger, 2 × confirm, claim
     if (signatures.length < 6) throw new Error(`expected ≥ 6 capsule transactions, found ${signatures.length}`);
+    /** Where each persona's wallet shows up: instruction names of the transactions that carry it. */
+    const seen = Object.fromEntries(Object.keys(cast).map((id) => [id, []]));
     for (const { signature } of signatures) {
       const tx = await connection.getTransaction(signature, { maxSupportedTransactionVersion: 0, commitment: "confirmed" });
-      const keys = tx.transaction.message.staticAccountKeys ?? tx.transaction.message.accountKeys;
-      if (keys.some((key) => key.equals(owner))) throw new Error(`owner wallet appears in ${signature}`);
+      const message = tx.transaction.message;
+      const keys = message.staticAccountKeys ?? message.accountKeys;
+      const data = Buffer.concat(message.compiledInstructions.map((ix) => Buffer.from(ix.data)));
+      const name = tx.meta.logMessages.find((l) => l.startsWith("Program log: Instruction: "))?.slice(26) ?? "?";
+      for (const [id, wallet] of Object.entries(cast)) {
+        if (keys.some((key) => key.equals(wallet)) || data.includes(wallet.toBuffer())) seen[id].push(name);
+      }
       if (relayer && !keys[0].equals(relayer)) throw new Error(`fee payer of ${signature} is not the relayer service`);
     }
-    console.log(`\n  capsule ${capsule.toBase58()}: ${signatures.length} transactions, owner ${owner.toBase58()} in none of them`);
+    const expected = { arif: [], sari: ["Claim"], budi: ["GuardianConfirm"], dewi: ["GuardianConfirm"], rizal: [] };
+    for (const [id, names] of Object.entries(expected)) {
+      if (JSON.stringify(seen[id]) !== JSON.stringify(names)) {
+        throw new Error(`${id} appears in [${seen[id].join(", ")}], expected [${names.join(", ")}]`);
+      }
+    }
+    // After the claim the capsule stores the heir it revealed, and still no guardian or owner.
+    const data = (await connection.getAccountInfo(capsule)).data;
+    const named = Object.entries(cast).filter(([, wallet]) => data.includes(wallet.toBuffer())).map(([id]) => id);
+    if (JSON.stringify(named) !== JSON.stringify(["sari"])) throw new Error(`capsule data names [${named.join(", ")}], expected [sari]`);
+    console.log(`\n  capsule ${capsule.toBase58()}: ${signatures.length} transactions`);
+    console.log(`  owner ${cast.arif.toBase58()} in none · Sari only in her claim · Budi and Dewi only in their confirmations · Rizal in none`);
     console.log(`  fee payer: ${relayer ? `relayer service ${relayer.toBase58()}` : "the in-browser relayer"}`);
   });
 

@@ -281,14 +281,18 @@ describe("SIKRIT SDK", () => {
         threshold: 3,
       });
 
-    /** The capsule account as the chain would report it. */
-    const chainState = (f: Family, sealed: kit.CapsuleKit, claimed: boolean): kit.CapsuleState => ({
-      commitment: f.commitment,
-      heir: f.heir.wallet.publicKey.toBytes(),
-      guardians: f.guardians.map((g) => g.wallet.publicKey.toBytes()),
-      shareHashes: sealed.shareHashes,
-      claimed,
-    });
+    /** The capsule account as the chain would report it (registered with the kit's roster commitments). */
+    const chainState = (f: Family, sealed: kit.CapsuleKit, claimed: boolean): kit.CapsuleState => {
+      const roster = kit.rosterCommitments(sealed);
+      return {
+        commitment: f.commitment,
+        heirCommitment: roster.heir,
+        guardianCommitments: roster.guardians,
+        shareHashes: sealed.shareHashes,
+        claimed,
+        heir: claimed ? f.heir.wallet.publicKey.toBytes() : null,
+      };
+    };
 
     const openOwn = (sealed: kit.CapsuleKit, holder: Holder) =>
       kit.openShare(sealed, kit.findShareIndex(sealed, holder.keyPair.publicKey), holder.keyPair.secretKey);
@@ -384,14 +388,18 @@ describe("SIKRIT SDK", () => {
       // Too early: the capsule is still Active or ClaimPending.
       expect(() => kit.releaseShare(sealed, guardianShare, chainState(f, sealed, false))).to.throw(/not been claimed/);
 
-      // A forged kit naming the attacker as heir does not match the heir registered on-chain.
+      // A forged kit naming the attacker as heir does not open the heir commitment registered on-chain.
       const forgedKit = { ...sealed, shares: [{ ...sealed.shares[0], holder: attacker.certificate }, ...sealed.shares.slice(1)] };
-      expect(() => kit.releaseShare(forgedKit, guardianShare, chainState(f, sealed, true))).to.throw(/heir and guardians/);
+      expect(() => kit.releaseShare(forgedKit, guardianShare, chainState(f, sealed, true))).to.throw(/heir and guardian commitments/);
 
-      // A release target certified by any wallet other than the on-chain heir is refused.
-      expect(() => kit.releaseShare(sealed, guardianShare, chainState(f, sealed, true), attacker.certificate)).to.throw(/on-chain heir/);
+      // A release target certified by any wallet other than the committed heir is refused.
+      expect(() => kit.releaseShare(sealed, guardianShare, chainState(f, sealed, true), attacker.certificate)).to.throw(/committed heir/);
       const mislabeled = { ...attacker.certificate, wallet: f.heir.certificate.wallet };
-      expect(() => kit.releaseShare(sealed, guardianShare, chainState(f, sealed, true), mislabeled)).to.throw(/on-chain heir/);
+      expect(() => kit.releaseShare(sealed, guardianShare, chainState(f, sealed, true), mislabeled)).to.throw(/committed heir/);
+
+      // A lying RPC that reports the attacker as the revealed heir does not redirect the release either.
+      const lyingChain = { ...chainState(f, sealed, true), heir: attacker.wallet.publicKey.toBytes() };
+      expect(() => kit.releaseShare(sealed, guardianShare, lyingChain, attacker.certificate)).to.throw(/heir other than the committed one/);
 
       // The heir's own share is never "released" by someone else.
       expect(() => kit.releaseShare(sealed, openOwn(sealed, f.heir), chainState(f, sealed, true))).to.throw(/not a guardian share/);
@@ -445,7 +453,7 @@ describe("SIKRIT SDK", () => {
       expect(() => kit.openRelease(sealed, crossRelease, f.heir.keyPair.secretKey)).to.throw();
     });
 
-    it("verifies a kit against the capsule's commitment, share hashes, heir and guardians on-chain", async () => {
+    it("verifies a kit against the capsule's commitment, share hashes, heir and guardian commitments on-chain", async () => {
       const f = await family();
       const sealed = await sealFor(f);
       const state = chainState(f, sealed, false);
@@ -453,14 +461,39 @@ describe("SIKRIT SDK", () => {
 
       const substitute = await sealFor(f); // same holders, fresh key and shares
       expect(() => kit.verifyKit(substitute, state)).to.throw(/share hashes/);
+      expect(() => kit.verifyKit({ ...substitute, shareHashes: sealed.shareHashes }, state)).to.throw(/commitments/); // fresh salts
       const otherCommitment = (await family()).commitment;
       expect(() => kit.verifyKit(sealed, { ...state, commitment: otherCommitment })).to.throw(/different capsule/);
       expect(() => kit.verifyKit(sealed, { ...state, shareHashes: sealed.shareHashes.slice(1) })).to.throw(/share hashes/);
-      expect(() => kit.verifyKit(sealed, { ...state, guardians: [...state.guardians].reverse() })).to.throw(/heir and guardians/);
-      expect(() => kit.verifyKit(sealed, { ...state, heir: state.guardians[0] })).to.throw(/heir and guardians/);
+      expect(() => kit.verifyKit(sealed, { ...state, guardianCommitments: [...state.guardianCommitments].reverse() })).to.throw(/commitments/);
+      expect(() => kit.verifyKit(sealed, { ...state, heirCommitment: state.guardianCommitments[0] })).to.throw(/commitments/);
+      expect(() => kit.verifyKit(sealed, { ...state, guardianCommitments: state.guardianCommitments.slice(1) })).to.throw(/commitments/);
+      const wrongSalt = { ...sealed, shares: sealed.shares.map((entry, i) => (i === 1 ? { ...entry, salt: flipLastBit(entry.salt) } : entry)) };
+      expect(() => kit.verifyKit(wrongSalt, state)).to.throw(/commitments/);
       const badSignature = { ...sealed, shares: sealed.shares.map((entry, i) =>
         i === 2 ? { ...entry, holder: { ...entry.holder, signature: flipLastBit(entry.holder.signature) } } : entry) };
       expect(() => kit.verifyKit(badSignature, state)).to.throw(/invalid inbox certificate/);
+    });
+
+    it("salts every holder afresh, so the roster commitments name nobody and link no two capsules", async () => {
+      const f = await family();
+      const [first, second] = [await sealFor(f), await sealFor(f)];
+      const salts = [...first.shares, ...second.shares].map((entry) => bytesToHex(entry.salt));
+      expect(new Set(salts).size).to.equal(salts.length);
+      expect(first.shares.every((entry) => entry.salt.length === 32)).to.equal(true);
+
+      const roster = kit.rosterCommitments(first);
+      expect(bytesToHex(roster.heir)).to.equal(bytesToHex(
+        liveness.memberCommitment(f.commitment, liveness.MemberRole.heir, f.heir.wallet.publicKey, first.shares[0].salt)));
+      expect(roster.guardians.map(bytesToHex)).to.deep.equal(f.guardians.map((g, i) => bytesToHex(
+        liveness.memberCommitment(f.commitment, liveness.MemberRole.guardian, g.wallet.publicKey, first.shares[1 + i].salt))));
+      expect(kit.rosterCommitments(second).guardians.map(bytesToHex)).to.not.include(bytesToHex(roster.guardians[0]));
+
+      // Each holder finds their role, slot and salt in the kit; a stranger finds nothing.
+      expect(kit.membership(first, f.heir.wallet.publicKey.toBytes())).to.deep.include({ index: 0, role: "heir", slot: -1 });
+      expect(kit.membership(first, f.guardians[2].wallet.publicKey.toBytes())).to.deep.include({ index: 3, role: "guardian", slot: 2 });
+      expect(bytesToHex(kit.membership(first, f.guardians[2].wallet.publicKey.toBytes())!.salt)).to.equal(bytesToHex(first.shares[3].salt));
+      expect(kit.membership(first, Keypair.generate().publicKey.toBytes())).to.equal(undefined);
     });
 
     it("authenticates the payload: a tampered threshold or ciphertext fails closed", async () => {
@@ -512,10 +545,11 @@ describe("SIKRIT SDK", () => {
       expect(text.length).to.be.lessThan(4096);
 
       const json = JSON.parse(text);
-      type Entry = { wallet: string; inbox: string; signature: string; sealed: string };
+      type Entry = { wallet: string; inbox: string; signature: string; salt: string; sealed: string };
       const malformed: Record<string, unknown>[] = [
         { ...json, sikrit: "something-else" },
-        { ...json, v: 2 },
+        { ...json, v: 1 }, // a protocol v1 kit: its capsule names wallets, not commitments
+        { ...json, v: 3 },
         { ...json, threshold: 5 },
         { ...json, threshold: 1 },
         { ...json, commitment: json.commitment.toUpperCase() },
@@ -526,6 +560,8 @@ describe("SIKRIT SDK", () => {
         { ...json, shares: json.shares.map((e: Entry) => ({ ...e, sealed: e.sealed.slice(2) })) },
         { ...json, shares: json.shares.map((e: Entry) => ({ ...e, wallet: "not-base58-0OIl" })) },
         { ...json, shares: json.shares.map((e: Entry) => ({ ...e, signature: e.signature.slice(2) })) },
+        { ...json, shares: json.shares.map((e: Entry) => ({ ...e, salt: e.salt.slice(2) })) },
+        { ...json, shares: json.shares.map(({ salt: _salt, ...e }: Entry) => e) },
       ];
       for (const bad of malformed) expect(() => kit.decodeKit(JSON.stringify(bad))).to.throw(/kit:/);
       expect(() => kit.decodeKit("null")).to.throw(/kit:/);

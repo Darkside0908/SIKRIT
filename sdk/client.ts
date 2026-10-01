@@ -7,9 +7,9 @@
  */
 import { sha256 } from "@noble/hashes/sha256";
 import { concatBytes, utf8ToBytes } from "@noble/hashes/utils";
-import { Connection, GetProgramAccountsFilter, PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.js";
+import { Connection, PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.js";
 
-import { CapsuleConfigInput, SchnorrProof, capsulePda, encodeCapsuleConfig } from "./liveness";
+import { CapsuleConfigInput, SchnorrProof, capsulePda, encodeCapsuleConfig, numberToBytesLE } from "./liveness";
 
 export const PROGRAM_ID = new PublicKey("FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F");
 
@@ -20,10 +20,7 @@ export const MIN_HEARTBEAT_INTERVAL = 60;
 export const MIN_GRACE_PERIOD = 60;
 
 /** 8 + Capsule::INIT_SPACE: every capsule account has exactly this size. */
-export const CAPSULE_ACCOUNT_SIZE = 8 + 32 + 32 + (4 + 32 * MAX_GUARDIANS) + 3 + 5 * 8 + (4 + 32 * MAX_SHARES) + 2;
-/** Byte offsets for `getProgramAccounts` memcmp filters. */
-export const HEIR_OFFSET = 8 + 32;
-export const GUARDIANS_OFFSET = HEIR_OFFSET + 32 + 4;
+export const CAPSULE_ACCOUNT_SIZE = 8 + 32 + 32 + 32 + (4 + 32 * MAX_GUARDIANS) + 3 + 5 * 8 + (4 + 32 * MAX_SHARES) + 2;
 
 const anchorDiscriminator = (preimage: string): Uint8Array => sha256(utf8ToBytes(preimage)).slice(0, 8);
 
@@ -42,12 +39,16 @@ const STATUSES: CapsuleStatus[] = ["active", "claimPending", "claimed"];
 
 export interface CapsuleAccount {
   commitment: Uint8Array;
-  heir: PublicKey;
-  guardians: PublicKey[];
+  /** Salted commitment to the heir's wallet (`memberCommitment`): who inherits stays hidden until the claim. */
+  heirCommitment: Uint8Array;
+  /** The wallet that opened `heirCommitment` in `claim`; null before. */
+  heir: PublicKey | null;
+  /** One salted commitment per guardian slot; a guardian is revealed only by its own confirm or veto. */
+  guardianCommitments: Uint8Array[];
   guardianThreshold: number;
-  /** Bit i set ⇔ guardians[i] approved the pending claim. */
+  /** Bit i set ⇔ the guardian in slot i approved the pending claim. */
   approvals: number;
-  /** Bit i set ⇔ guardians[i] used its veto since the owner's last heartbeat. */
+  /** Bit i set ⇔ the guardian in slot i used its veto since the owner's last heartbeat. */
   vetoes: number;
   heartbeatInterval: bigint;
   gracePeriod: bigint;
@@ -70,22 +71,24 @@ export const PROGRAM_ERRORS: { name: string; message: string }[] = [
   { name: "InvalidCommitment", message: "The liveness commitment is not a valid prime-order point." },
   { name: "InvalidProofR", message: "The proof's R value is not a valid curve point." },
   { name: "InvalidProofS", message: "The proof's s value is not a canonical scalar." },
-  { name: "ProofVerificationFailed", message: "The zero-knowledge proof did not verify (wrong key, stale nonce or replay)." },
+  { name: "ProofVerificationFailed", message: "The zero-knowledge proof did not verify (wrong key, stale nonce, replay or altered expiry)." },
   { name: "HeartbeatNotExpired", message: "The owner's last heartbeat is still fresh — the capsule cannot be triggered yet." },
   { name: "ClaimNotPending", message: "No claim is pending on this capsule." },
-  { name: "UnauthorizedGuardian", message: "This wallet is not a guardian of this capsule." },
+  { name: "UnauthorizedGuardian", message: "This wallet and kit do not open a guardian commitment of this capsule." },
   { name: "GracePeriodNotExpired", message: "The grace period has not ended yet." },
   { name: "InsufficientGuardianApprovals", message: "Not enough guardians have confirmed the claim yet." },
-  { name: "UnauthorizedHeir", message: "This wallet is not the heir of this capsule." },
-  { name: "InvalidHeir", message: "The heir address is invalid." },
-  { name: "InvalidGuardian", message: "A guardian address is invalid." },
-  { name: "DuplicateGuardian", message: "The same guardian is listed twice." },
-  { name: "HeirCannotBeGuardian", message: "The heir cannot also be a guardian." },
+  { name: "UnauthorizedHeir", message: "This wallet and kit do not open the heir commitment of this capsule." },
+  { name: "InvalidHeir", message: "The heir commitment is invalid." },
+  { name: "InvalidGuardian", message: "A guardian commitment is invalid." },
+  { name: "DuplicateGuardian", message: "The same guardian commitment is listed twice." },
+  { name: "HeirCannotBeGuardian", message: "The heir commitment cannot also be a guardian commitment." },
   { name: "GuardianAlreadyApproved", message: "This guardian already confirmed the claim." },
   { name: "GuardianAlreadyVetoed", message: "This guardian already used its veto until the owner's next heartbeat." },
   { name: "VetoWindowClosed", message: "The grace period is over, so the claim can no longer be vetoed." },
   { name: "CapsuleAlreadyClaimed", message: "The capsule has already been claimed." },
   { name: "NonceOverflow", message: "The heartbeat counter overflowed." },
+  { name: "ProofExpired", message: "The heartbeat proof expired before it reached the chain; send a fresh one." },
+  { name: "ProofExpiryTooFar", message: "The heartbeat proof's expiry is more than an hour ahead of the cluster clock." },
 ];
 
 /** Maps a program error code (e.g. from a failed simulation) to its entry, if it is ours. */
@@ -134,12 +137,19 @@ export function createCapsuleIx(args: {
   });
 }
 
-/** Signer-less: the proof is the only authorization, so any fee payer can relay it. */
-export function heartbeatIx(args: { capsule: PublicKey; proof: SchnorrProof; programId?: PublicKey }): TransactionInstruction {
+const i64 = (n: bigint): Uint8Array => numberToBytesLE(BigInt.asUintN(64, n), 8);
+
+/** Signer-less: the proof is the only authorization, so any fee payer can relay it (until `expiresAt`). */
+export function heartbeatIx(args: {
+  capsule: PublicKey;
+  proof: SchnorrProof;
+  expiresAt: bigint;
+  programId?: PublicKey;
+}): TransactionInstruction {
   return new TransactionInstruction({
     programId: args.programId ?? PROGRAM_ID,
     keys: [writable(args.capsule)],
-    data: Buffer.from(concatBytes(DISCRIMINATORS.heartbeat, proofBytes(args.proof))),
+    data: Buffer.from(concatBytes(DISCRIMINATORS.heartbeat, proofBytes(args.proof), i64(args.expiresAt))),
   });
 }
 
@@ -152,22 +162,40 @@ export function triggerClaimIx(args: { capsule: PublicKey; programId?: PublicKey
   });
 }
 
-function signedIx(discriminator: Uint8Array, capsule: PublicKey, signer: PublicKey, programId?: PublicKey) {
+function signedIx(data: Uint8Array, capsule: PublicKey, signer: PublicKey, programId?: PublicKey) {
   return new TransactionInstruction({
     programId: programId ?? PROGRAM_ID,
     keys: [writable(capsule), { pubkey: signer, isSigner: true, isWritable: false }],
-    data: Buffer.from(discriminator),
+    data: Buffer.from(data),
   });
 }
 
-export const guardianConfirmIx = (args: { capsule: PublicKey; guardian: PublicKey; programId?: PublicKey }) =>
-  signedIx(DISCRIMINATORS.guardianConfirm, args.capsule, args.guardian, args.programId);
+/** A member's opening of its commitment: the guardian slot (heir: none) and the salt from the kit. */
+export interface GuardianOpening {
+  capsule: PublicKey;
+  guardian: PublicKey;
+  slot: number;
+  salt: Uint8Array;
+  programId?: PublicKey;
+}
 
-export const guardianVetoIx = (args: { capsule: PublicKey; guardian: PublicKey; programId?: PublicKey }) =>
-  signedIx(DISCRIMINATORS.guardianVeto, args.capsule, args.guardian, args.programId);
+function guardianData(discriminator: Uint8Array, { slot, salt }: GuardianOpening): Uint8Array {
+  if (!Number.isInteger(slot) || slot < 0 || slot >= MAX_GUARDIANS) throw new Error("client: guardian slot out of range");
+  if (salt.length !== 32) throw new Error("client: salt must be 32 bytes");
+  return concatBytes(discriminator, Uint8Array.of(slot), salt);
+}
 
-export const claimIx = (args: { capsule: PublicKey; heir: PublicKey; programId?: PublicKey }) =>
-  signedIx(DISCRIMINATORS.claim, args.capsule, args.heir, args.programId);
+/** Reveals the guardian (signer + salt) on-chain: only call it when acting on a claim. */
+export const guardianConfirmIx = (args: GuardianOpening) =>
+  signedIx(guardianData(DISCRIMINATORS.guardianConfirm, args), args.capsule, args.guardian, args.programId);
+
+export const guardianVetoIx = (args: GuardianOpening) =>
+  signedIx(guardianData(DISCRIMINATORS.guardianVeto, args), args.capsule, args.guardian, args.programId);
+
+export function claimIx(args: { capsule: PublicKey; heir: PublicKey; salt: Uint8Array; programId?: PublicKey }) {
+  if (args.salt.length !== 32) throw new Error("client: salt must be 32 bytes");
+  return signedIx(concatBytes(DISCRIMINATORS.claim, args.salt), args.capsule, args.heir, args.programId);
+}
 
 // -----------------------------------------------------------------------------
 // Account decoding
@@ -214,9 +242,13 @@ export function decodeCapsule(data: Uint8Array): CapsuleAccount {
   if (!discriminator.every((byte, i) => byte === DISCRIMINATORS.capsuleAccount[i])) {
     throw new Error("client: not a SIKRIT capsule account");
   }
+  // Capsules created before protocol v2 (devnet, 1 Oct 2026) share the discriminator but not the layout.
+  if (data.length !== CAPSULE_ACCOUNT_SIZE) throw new Error("client: capsule from an older protocol version");
   const commitment = reader.bytes(32);
-  const heir = new PublicKey(reader.bytes(32));
-  const guardians = reader.vec(MAX_GUARDIANS, () => new PublicKey(reader.bytes(32)));
+  const heirCommitment = reader.bytes(32);
+  const revealed = new PublicKey(reader.bytes(32));
+  const heir = revealed.equals(PublicKey.default) ? null : revealed;
+  const guardianCommitments = reader.vec(MAX_GUARDIANS, () => reader.bytes(32));
   const guardianThreshold = reader.u8();
   const approvals = reader.u8();
   const vetoes = reader.u8();
@@ -230,8 +262,8 @@ export function decodeCapsule(data: Uint8Array): CapsuleAccount {
   if (!status) throw new Error("client: unknown capsule status");
   const bump = reader.u8();
   return {
-    commitment, heir, guardians, guardianThreshold, approvals, vetoes, heartbeatInterval, gracePeriod,
-    lastHeartbeat, claimTriggeredAt, heartbeatNonce, shareHashes, status, bump,
+    commitment, heirCommitment, heir, guardianCommitments, guardianThreshold, approvals, vetoes, heartbeatInterval,
+    gracePeriod, lastHeartbeat, claimTriggeredAt, heartbeatNonce, shareHashes, status, bump,
   };
 }
 
@@ -246,59 +278,25 @@ export async function fetchCapsule(connection: Connection, address: PublicKey): 
   return decodeCapsule(info.data);
 }
 
-async function findCapsules(
-  connection: Connection,
-  filters: GetProgramAccountsFilter[],
-  programId: PublicKey,
-): Promise<{ address: PublicKey; capsule: CapsuleAccount }[]> {
-  const accounts = await connection.getProgramAccounts(programId, {
-    commitment: "confirmed",
-    filters: [{ dataSize: CAPSULE_ACCOUNT_SIZE }, ...filters],
-  });
-  return accounts.map(({ pubkey, account }) => ({ address: pubkey, capsule: decodeCapsule(account.data) }));
-}
-
-/** Capsules naming `heir` as heir (heir keys are public on-chain, see R3 in the security review). */
-export function findCapsulesByHeir(connection: Connection, heir: PublicKey, programId = PROGRAM_ID) {
-  return findCapsules(connection, [{ memcmp: { offset: HEIR_OFFSET, bytes: heir.toBase58() } }], programId);
-}
-
 /**
- * Capsules listing `guardian` in any of the guardian slots. A memcmp filter tests one slot only, and public RPCs
- * throttle `getProgramAccounts` hard (one query per slot got rate-limited on devnet), so this reads just the guardian
- * vector of every capsule in a single query, then fetches the full accounts of the matches.
+ * Current state of the capsules at `addresses` (null where none exists), in one `getMultipleAccounts` per 100.
+ * Heirs and guardians know their capsules from their kits: the chain holds only commitments to them, so there is
+ * nothing to search for by wallet (see R3 in the security review).
  */
-export async function findCapsulesByGuardian(connection: Connection, guardian: PublicKey, programId = PROGRAM_ID) {
-  const vectors = await connection.getProgramAccounts(programId, {
-    commitment: "confirmed",
-    filters: [{ dataSize: CAPSULE_ACCOUNT_SIZE }],
-    dataSlice: { offset: GUARDIANS_OFFSET - 4, length: 4 + 32 * MAX_GUARDIANS },
-  });
-  const matches = vectors.filter(({ account }) => guardianVectorIncludes(account.data, guardian)).map(({ pubkey }) => pubkey);
-  const found: { address: PublicKey; capsule: CapsuleAccount }[] = [];
-  for (let i = 0; i < matches.length; i += 100) {
-    const batch = matches.slice(i, i + 100); // getMultipleAccounts takes at most 100 keys
+export async function fetchCapsules(
+  connection: Connection,
+  addresses: PublicKey[],
+): Promise<{ address: PublicKey; capsule: CapsuleAccount | null }[]> {
+  const found: { address: PublicKey; capsule: CapsuleAccount | null }[] = [];
+  for (let i = 0; i < addresses.length; i += 100) {
+    const batch = addresses.slice(i, i + 100); // getMultipleAccounts takes at most 100 keys
     const infos = await connection.getMultipleAccountsInfo(batch, "confirmed");
     infos.forEach((info, j) => {
-      const capsule = info && decodeCapsule(info.data);
-      if (capsule?.guardians.some((g) => g.equals(guardian))) found.push({ address: batch[j], capsule });
+      if (info && !info.owner.equals(PROGRAM_ID)) throw new Error("client: account is not owned by the SIKRIT program");
+      found.push({ address: batch[j], capsule: info ? decodeCapsule(info.data) : null });
     });
   }
   return found;
-}
-
-/**
- * `vector` is a Borsh `Vec<Pubkey>` read through a fixed-size window: a u32 length, then that many keys. Borsh does
- * not pad, so the bytes past the length belong to the next fields and must not be compared.
- */
-export function guardianVectorIncludes(vector: Uint8Array, guardian: PublicKey): boolean {
-  const count = new DataView(vector.buffer, vector.byteOffset, vector.byteLength).getUint32(0, true);
-  const target = guardian.toBytes();
-  for (let slot = 0; slot < Math.min(count, MAX_GUARDIANS); slot++) {
-    const start = 4 + 32 * slot;
-    if (target.every((byte, i) => byte === vector[start + i])) return true;
-  }
-  return false;
 }
 
 // -----------------------------------------------------------------------------

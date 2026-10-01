@@ -1,4 +1,4 @@
-import { CapsuleAccount, claimIx, findCapsulesByHeir, timeline, triggerClaimIx } from "@sdk/client";
+import { CapsuleAccount, claimIx, timeline, triggerClaimIx } from "@sdk/client";
 import * as kit from "@sdk/kit";
 import { hexToBytes } from "@noble/hashes/utils";
 import { PublicKey } from "@solana/web3.js";
@@ -11,10 +11,9 @@ import { ActingAs } from "../components/Shell";
 import { ActionButton, Heading, Notice, TxLink } from "../components/ui";
 import { Seal } from "../components/visuals";
 import type { Actor } from "../lib/actors";
-import { useInbox, useVerifiedKit, who } from "../lib/capsule";
-import { connection } from "../lib/chain";
+import { importMemberKit, useInbox, useMemberCapsules, useVerifiedKit } from "../lib/capsule";
 import { sendRelayed } from "../lib/relayer";
-import { useAction, useCapsule, useChainNow, usePolling } from "../lib/hooks";
+import { useAction, useCapsule, useChainNow } from "../lib/hooks";
 import { useActor } from "../lib/identity";
 import { decodeRelease, useMailbox } from "../lib/mailbox";
 
@@ -25,7 +24,7 @@ export function HeirPage() {
   const { inbox, create } = useInbox(actor);
   const action = useAction();
   const key = actor?.publicKey.toBase58();
-  const list = usePolling(actor ? () => findCapsulesByHeir(connection, actor.publicKey) : undefined, [key]);
+  const capsules = useMemberCapsules(actor, "heir");
 
   return (
     <div className="space-y-10">
@@ -43,48 +42,64 @@ export function HeirPage() {
       <div className="grid gap-6 lg:grid-cols-[22rem_1fr]">
         <InboxCard actor={actor} inbox={inbox} busy={action.busy} audience="the owner" onCreate={() => action.run("Creating", create)} />
         <div className="space-y-6">
-          {list.error && <Notice tone="error">{list.error}</Notice>}
-          {list.value === undefined && actor && <div className="card p-6 text-bone-400">Searching the chain for capsules naming you…</div>}
-          {list.value?.length === 0 && (
-            <div className="card ledger p-8 text-bone-300">
+          {capsules?.length === 0 && (
+            <div className="card ledger space-y-4 p-8 text-bone-300">
               <p className="font-display text-2xl text-bone-100">Nothing sealed for you yet.</p>
-              <p className="mt-2 text-sm text-bone-400">When an owner registers a capsule with your invite, it appears here.</p>
+              <p className="text-sm text-bone-400">
+                The chain holds only a salted commitment to you, so nobody can find what was left for you by searching
+                for your wallet, not even you. Your capsules arrive with the kit their owner sends you.
+              </p>
             </div>
           )}
-          {list.value?.map(({ address, capsule }) => (
-            <HeirCapsule key={`${key}:${address.toBase58()}`} address={address} initial={capsule} actor={actor!} inbox={inbox} onChange={list.refresh} />
-          ))}
+          {actor &&
+            capsules?.map(({ address }) => (
+              <HeirCapsule key={`${key}:${address.toBase58()}`} address={address} actor={actor} inbox={inbox} />
+            ))}
+          {actor && (
+            <KitImport
+              message="Received a kit file from an owner? Import it to follow that capsule."
+              onImport={(text) => void action.run("Importing", () => importMemberKit(text, actor.publicKey))}
+            />
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-function HeirCapsule({
+function HeirCapsule({ address, actor, inbox }: { address: PublicKey; actor: Actor; inbox: Inbox }) {
+  const { capsule, error, refresh } = useCapsule(address);
+  if (capsule === undefined && error) return <Notice tone="error">Capsule {address.toBase58()}: {error}</Notice>;
+  if (capsule === undefined) return <div className="card p-6 text-bone-400">Loading capsule…</div>;
+  if (capsule === null) return <Notice tone="warn">The capsule of this kit does not exist on this cluster.</Notice>;
+  return <HeirCapsuleView address={address} capsule={capsule} actor={actor} inbox={inbox} onChange={refresh} />;
+}
+
+function HeirCapsuleView({
   address,
-  initial,
+  capsule,
   actor,
   inbox,
   onChange,
 }: {
   address: PublicKey;
-  initial: CapsuleAccount;
+  capsule: CapsuleAccount;
   actor: Actor;
   inbox: Inbox;
   onChange: () => void;
 }) {
-  const live = useCapsule(address);
-  const capsule = live.capsule ?? initial;
   const now = useChainNow();
   const t = now !== undefined ? timeline(capsule, now) : undefined;
   const action = useAction();
   const [lastTx, setLastTx] = useState<string>();
+  const verified = useVerifiedKit(address, capsule);
+  const member = verified.checked.kit && kit.membership(verified.checked.kit, actor.publicKey.toBytes());
+  const salt = member?.role === "heir" ? member.salt : undefined;
 
   const send = (label: string, build: () => Parameters<typeof sendRelayed>[0], cosign?: Actor) =>
     action.run(label, async () => {
       const { signature } = await sendRelayed(build(), cosign);
       setLastTx(signature);
-      live.refresh();
       onChange();
     });
 
@@ -108,8 +123,9 @@ function HeirCapsule({
               busy={action.busy}
               busyLabel="Claiming"
               label="Claim the capsule"
-              disabled={!t?.canClaim}
-              onClick={() => send("Claiming", () => [claimIx({ capsule: address, heir: actor.publicKey })], actor)}
+              disabled={!t?.canClaim || !salt}
+              title={salt ? "Opens the heir commitment: the chain learns that you are the heir" : "Needs a verified kit (it holds your salt)"}
+              onClick={() => send("Claiming", () => [claimIx({ capsule: address, heir: actor.publicKey, salt: salt! })], actor)}
             />
             {!t?.canClaim && (
               <span className="text-right text-xs text-bone-500">
@@ -122,15 +138,25 @@ function HeirCapsule({
         )}
         {lastTx && <TxLink signature={lastTx} />}
       </CapsuleVitals>
-      <Recovery address={address} capsule={capsule} inbox={inbox} />
+      <Recovery address={address} capsule={capsule} inbox={inbox} verified={verified} />
     </article>
   );
 }
 
-function Recovery({ address, capsule, inbox }: { address: PublicKey; capsule: CapsuleAccount; inbox: Inbox }) {
+function Recovery({
+  address,
+  capsule,
+  inbox,
+  verified,
+}: {
+  address: PublicKey;
+  capsule: CapsuleAccount;
+  inbox: Inbox;
+  verified: ReturnType<typeof useVerifiedKit>;
+}) {
   const mailbox = useMailbox();
   const action = useAction();
-  const { kitText, checked, importKit } = useVerifiedKit(address, capsule);
+  const { kitText, checked, importKit } = verified;
   const [pasted, setPasted] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
   const [revealed, setRevealed] = useState<string>();
@@ -202,8 +228,8 @@ function Recovery({ address, capsule, inbox }: { address: PublicKey; capsule: Ca
       {checked.error && <Notice tone="error">Kit rejected: {checked.error}</Notice>}
       {checked.kit && (
         <Notice tone="success">
-          Kit verified against the chain: same capsule, same share hashes, holders certified by the heir and guardian
-          wallets registered on-chain.
+          Kit verified against the chain: same capsule, same share hashes, and every holder's wallet and salt open the
+          heir and guardian commitments registered on-chain.
         </Notice>
       )}
       {own?.share && (
@@ -239,14 +265,14 @@ function Recovery({ address, capsule, inbox }: { address: PublicKey; capsule: Ca
       ) : !revealed ? (
         <ActionButton className="btn-seal px-6 py-3" busy={action.busy} busyLabel="Unsealing" label="Unseal the secret" disabled={!canUnseal} onClick={unseal} />
       ) : (
-        <Revealed text={revealed} from={who(capsule.heir)} onClear={() => setRevealed(undefined)} />
+        <Revealed text={revealed} onClear={() => setRevealed(undefined)} />
       )}
     </section>
   );
 }
 
 /** Press-and-hold reveal, so a seed phrase is never on screen by accident. */
-function Revealed({ text, onClear }: { text: string; from: string; onClear: () => void }) {
+function Revealed({ text, onClear }: { text: string; onClear: () => void }) {
   const [holding, setHolding] = useState(false);
   const words = text.trim().split(/\s+/);
   const looksLikeSeed = words.length >= 12 && words.length <= 24 && words.every((w) => /^[a-z]+$/.test(w));

@@ -20,9 +20,15 @@
  *
  * Inbox keys are X25519 keys derived from a wallet signature (`deriveInboxKeyPair`), so holders can
  * re-derive them years later from the same wallet. Each one travels inside an inbox certificate —
- * signed by that same wallet, i.e. the heir or guardian address registered on-chain — so neither
- * the owner (when sealing) nor a guardian (when releasing) can be tricked into encrypting a share
- * to a key an attacker swapped in.
+ * signed by that same wallet, i.e. the heir or guardian committed on-chain — so neither the owner
+ * (when sealing) nor a guardian (when releasing) can be tricked into encrypting a share to a key an
+ * attacker swapped in.
+ *
+ * Roster (kit v2): the chain stores no heir or guardian wallet, only member commitments
+ * SHA-256("SIKRIT:member:v1" ‖ P ‖ role ‖ wallet ‖ salt) (sdk/liveness.ts). The kit carries each
+ * holder's random salt next to their certificate, so every holder can check the whole roster against
+ * the chain, and opens their own commitment with it when they act (confirm, veto, claim). The kit
+ * therefore names the family: it goes to the holders only.
  */
 import { xchacha20poly1305 } from "@noble/ciphers/chacha";
 import { ed25519 } from "@noble/curves/ed25519";
@@ -31,9 +37,10 @@ import { bytesToHex, concatBytes, hexToBytes, randomBytes, utf8ToBytes } from "@
 import { PublicKey } from "@solana/web3.js";
 
 import * as hpke from "./hpke";
+import { MemberRole, memberCommitment } from "./liveness";
 import { combineShares, splitSecret } from "./shamir";
 
-export const KIT_VERSION = 1;
+export const KIT_VERSION = 2;
 /** Random data-encryption key that is actually split. */
 export const DEK_LENGTH = 32;
 export const SHARE_LENGTH = DEK_LENGTH + 1;
@@ -47,6 +54,7 @@ const NONCE_LENGTH = 24;
 const TAG_LENGTH = 16;
 const KEY_LENGTH = 32;
 const SIGNATURE_LENGTH = 64;
+const SALT_LENGTH = 32;
 
 const PAYLOAD_DOMAIN = utf8ToBytes("SIKRIT:payload:v1");
 const SHARE_DOMAIN = utf8ToBytes("SIKRIT:share:v1");
@@ -71,6 +79,8 @@ export interface InboxCertificate {
 
 export interface SealedShare {
   holder: InboxCertificate;
+  /** Random salt of the holder's on-chain member commitment; opens it in confirm/veto (guardians) or claim (heir). */
+  salt: Uint8Array;
   /** HPKE box (enc ‖ ciphertext ‖ tag) only the holder's inbox secret key opens. */
   sealed: Uint8Array;
 }
@@ -101,10 +111,20 @@ export interface SealParams {
 /** What a kit is checked against: the capsule account as read from the chain. */
 export interface CapsuleState {
   commitment: Uint8Array;
-  heir: Uint8Array;
-  guardians: Uint8Array[];
+  heirCommitment: Uint8Array;
+  guardianCommitments: Uint8Array[];
   shareHashes: Uint8Array[];
   claimed: boolean;
+  /** The heir wallet `claim` revealed on-chain (absent or null before the claim). */
+  heir?: Uint8Array | null;
+}
+
+/** A holder's place in the kit: share index, role, guardian slot (heir: −1) and the salt that opens their commitment. */
+export interface Membership {
+  index: number;
+  role: "heir" | "guardian";
+  slot: number;
+  salt: Uint8Array;
 }
 
 const u8 = (n: number): Uint8Array => Uint8Array.of(n);
@@ -116,6 +136,8 @@ const payloadAad = (commitment: Uint8Array, threshold: number, shares: number): 
   concatBytes(PAYLOAD_DOMAIN, commitment, u8(threshold), u8(shares));
 
 const shareInfo = (commitment: Uint8Array): Uint8Array => concatBytes(SHARE_DOMAIN, commitment);
+
+const roleOf = (index: number) => (index === 0 ? MemberRole.heir : MemberRole.guardian);
 
 const releaseInfo = (commitment: Uint8Array): Uint8Array => concatBytes(RELEASE_DOMAIN, commitment);
 
@@ -237,6 +259,7 @@ export async function sealCapsuleKit({ secret, commitment, heir, guardians, thre
     payload,
     shares: holders.map((holder, i) => ({
       holder: copyCertificate(holder),
+      salt: randomBytes(SALT_LENGTH),
       sealed: hpke.seal(holder.inbox, shareInfo(commitment), shares[i], u8(i)),
     })),
     shareHashes: shares.map((share) => shareHash(commitment, share)),
@@ -245,9 +268,24 @@ export async function sealCapsuleKit({ secret, commitment, heir, guardians, thre
   return kit;
 }
 
+/** The member commitments the owner registers on-chain (`CapsuleConfig.heir_commitment`, `guardian_commitments`). */
+export function rosterCommitments(kit: CapsuleKit): { heir: Uint8Array; guardians: Uint8Array[] } {
+  const [heir, ...guardians] = kit.shares.map((entry, i) =>
+    memberCommitment(kit.commitment, roleOf(i), entry.holder.wallet, entry.salt),
+  );
+  return { heir, guardians };
+}
+
+/** Where `wallet` sits in the kit, with the salt it needs to act on-chain; undefined if it holds no share. */
+export function membership(kit: CapsuleKit, wallet: Uint8Array): Membership | undefined {
+  const index = kit.shares.findIndex((entry) => equalBytes(entry.holder.wallet, wallet));
+  if (index < 0) return undefined;
+  return { index, role: index === 0 ? "heir" : "guardian", slot: index - 1, salt: kit.shares[index].salt };
+}
+
 /**
- * Rejects a kit that does not belong to the on-chain capsule: commitment, share hashes, and
- * holders certified by exactly the heir and guardian wallets registered on-chain, in order.
+ * Rejects a kit that does not belong to the on-chain capsule: commitment, share hashes, and holders
+ * whose wallet and salt open exactly the heir and guardian commitments registered on-chain, in order.
  */
 export function verifyKit(kit: CapsuleKit, state: Omit<CapsuleState, "claimed">): void {
   if (!equalBytes(kit.commitment, state.commitment)) throw new Error("kit: belongs to a different capsule");
@@ -256,10 +294,11 @@ export function verifyKit(kit: CapsuleKit, state: Omit<CapsuleState, "claimed">)
     kit.shareHashes.every((hash, i) => equalBytes(hash, state.shareHashes[i]));
   if (!hashesMatch) throw new Error("kit: share hashes do not match the capsule on-chain");
 
-  const wallets = [state.heir, ...state.guardians];
-  const holdersMatch =
-    kit.shares.length === wallets.length && kit.shares.every((entry, i) => equalBytes(entry.holder.wallet, wallets[i]));
-  if (!holdersMatch) throw new Error("kit: holders are not the capsule's heir and guardians");
+  const onChain = [state.heirCommitment, ...state.guardianCommitments];
+  const roster = rosterCommitments(kit);
+  const inKit = [roster.heir, ...roster.guardians];
+  const holdersMatch = inKit.length === onChain.length && inKit.every((c, i) => equalBytes(c, onChain[i]));
+  if (!holdersMatch) throw new Error("kit: holders do not open the capsule's heir and guardian commitments");
   if (!kit.shares.every((entry) => verifyInboxCertificate(entry.holder))) {
     throw new Error("kit: invalid inbox certificate");
   }
@@ -287,10 +326,11 @@ export function openShare(kit: CapsuleKit, index: number, inboxSecretKey: Uint8A
 
 /**
  * Guardian side: re-seals an opened share to the heir — only for a kit that matches the chain,
- * only once the capsule is `Claimed`, and only to an inbox key certified by the on-chain heir
- * wallet (the kit's own heir certificate by default, or a fresh one if the heir rotated keys).
- * Checking the chain first is the guardian's promise, not something the cryptography can force
- * (see SIK-11 in docs/SECURITY-REVIEW.md).
+ * only once the capsule is `Claimed`, and only to an inbox key certified by the heir wallet the
+ * on-chain heir commitment binds (the kit's own heir certificate by default, or a fresh one if the
+ * heir rotated keys). A heir the chain reports as revealed must be that same wallet, so an RPC that
+ * names someone else is refused. Checking the chain first is the guardian's promise, not something
+ * the cryptography can force (see SIK-11 in docs/SECURITY-REVIEW.md).
  */
 export function releaseShare(
   kit: CapsuleKit,
@@ -300,8 +340,12 @@ export function releaseShare(
 ): Uint8Array {
   verifyKit(kit, state);
   if (!state.claimed) throw new Error("kit: the capsule has not been claimed on-chain");
-  if (!equalBytes(heirCertificate.wallet, state.heir) || !verifyInboxCertificate(heirCertificate)) {
-    throw new Error("kit: release target is not certified by the on-chain heir");
+  const committedHeir = kit.shares[0].holder.wallet;
+  if (state.heir && !equalBytes(state.heir, committedHeir)) {
+    throw new Error("kit: the chain reports a heir other than the committed one");
+  }
+  if (!equalBytes(heirCertificate.wallet, committedHeir) || !verifyInboxCertificate(heirCertificate)) {
+    throw new Error("kit: release target is not certified by the committed heir");
   }
   if (shareIndexOf(kit, share) < 1) throw new Error("kit: refusing to release a share that is not a guardian share of this kit");
   return hpke.seal(heirCertificate.inbox, releaseInfo(kit.commitment), share);
@@ -357,10 +401,11 @@ export function encodeKit(kit: CapsuleKit): string {
     commitment: bytesToHex(kit.commitment),
     threshold: kit.threshold,
     payload: bytesToHex(kit.payload),
-    shares: kit.shares.map(({ holder, sealed }) => ({
+    shares: kit.shares.map(({ holder, salt, sealed }) => ({
       wallet: new PublicKey(holder.wallet).toBase58(),
       inbox: bytesToHex(holder.inbox),
       signature: bytesToHex(holder.signature),
+      salt: bytesToHex(salt),
       sealed: bytesToHex(sealed),
     })),
     shareHashes: kit.shareHashes.map(bytesToHex),
@@ -383,7 +428,7 @@ function walletField(value: unknown): Uint8Array {
   }
 }
 
-/** Strict parser: anything that is not a well-formed v1 kit is rejected. */
+/** Strict parser: anything that is not a well-formed v2 kit is rejected (v1 kits belong to protocol v1 capsules). */
 export function decodeKit(text: string): CapsuleKit {
   let json;
   try {
@@ -414,6 +459,7 @@ export function decodeKit(text: string): CapsuleKit {
         inbox: hexField(entry?.inbox, "inbox", KEY_LENGTH),
         signature: hexField(entry?.signature, "signature", SIGNATURE_LENGTH),
       },
+      salt: hexField(entry?.salt, "salt", SALT_LENGTH),
       sealed: hexField(entry?.sealed, "sealed share", SEALED_SHARE_LENGTH),
     })),
     shareHashes: json.shareHashes.map((hash: unknown) => hexField(hash, "share hash", KEY_LENGTH)),

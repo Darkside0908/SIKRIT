@@ -89,43 +89,6 @@ export function useCapsule(address: PublicKey | undefined) {
   return { capsule, error, refresh };
 }
 
-/**
- * Polls an async loader (capsule lists), with manual refresh. Public RPCs rate-limit `getProgramAccounts`, so a tick
- * is skipped while the last load is still running (web3.js retries a 429 with backoff) or the tab is hidden.
- * Capsules already on screen stay live through `useCapsule`'s subscription; polling only discovers new ones.
- */
-export function usePolling<T>(load: (() => Promise<T>) | undefined, deps: unknown[], everyMs = 15_000) {
-  const [value, setValue] = useState<T>();
-  const [error, setError] = useState<string>();
-  const [version, setVersion] = useState(0);
-  useEffect(() => {
-    if (!load) {
-      setValue(undefined);
-      return;
-    }
-    let live = true;
-    let loading = false;
-    const run = () => {
-      if (loading || document.visibilityState === "hidden") return;
-      loading = true;
-      load()
-        .then((v) => live && (setValue(v), setError(undefined)))
-        .catch((e) => live && setError(explainError(e)))
-        .finally(() => (loading = false));
-    };
-    run();
-    const id = setInterval(run, everyMs);
-    document.addEventListener("visibilitychange", run);
-    return () => {
-      live = false;
-      clearInterval(id);
-      document.removeEventListener("visibilitychange", run);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps, version]);
-  return { value, error, refresh: useCallback(() => setVersion((v) => v + 1), []) };
-}
-
 // --- Actions ---------------------------------------------------------------------
 
 /** Runs one user action at a time with a busy label and a human-readable error. */

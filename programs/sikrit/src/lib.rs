@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::hash::hashv;
 use curve25519_dalek::scalar::Scalar;
 use sha2::{Digest, Sha512};
 
@@ -10,14 +11,22 @@ pub const MAX_SHARES: usize = 10;
 pub const MIN_HEARTBEAT_INTERVAL: i64 = 60; // 1 menit untuk testing devnet, produksi 30-90 hari
 #[constant]
 pub const MIN_GRACE_PERIOD: i64 = 60;
+/// Bukti liveness paling lama berlaku 1 jam: relayer yang menahan bukti tidak bisa memakainya belakangan.
+#[constant]
+pub const MAX_PROOF_LIFETIME: i64 = 3600;
 
 #[constant]
 pub const CAPSULE_SEED: &[u8] = b"capsule";
 /// Domain separation Fiat–Shamir: bukti registrasi dan bukti liveness tidak bisa saling dipakai ulang.
 #[constant]
-pub const REGISTER_DOMAIN: &[u8] = b"SIKRIT:register:v1";
+pub const REGISTER_DOMAIN: &[u8] = b"SIKRIT:register:v2";
 #[constant]
-pub const LIVENESS_DOMAIN: &[u8] = b"SIKRIT:liveness:v1";
+pub const LIVENESS_DOMAIN: &[u8] = b"SIKRIT:liveness:v2";
+/// Komitmen anggota: SHA-256(MEMBER_DOMAIN ‖ P ‖ role ‖ wallet ‖ salt), lihat `member_commitment`.
+#[constant]
+pub const MEMBER_DOMAIN: &[u8] = b"SIKRIT:member:v1";
+pub const ROLE_HEIR: u8 = 0;
+pub const ROLE_GUARDIAN: u8 = 1;
 
 // Persetujuan & veto guardian disimpan sebagai bitmap u8.
 const _: () = assert!(MAX_GUARDIANS <= 8);
@@ -32,6 +41,9 @@ pub mod sikrit {
     /// PDA = ["capsule", P] dan state tidak menyimpan `owner`. Siapa pun boleh membayar rent (`payer`);
     /// otorisasi pemilik adalah proof-of-possession Schnorr atas x yang mengikat seluruh `config`,
     /// sehingga pihak lain tidak bisa mendaftarkan (atau front-run) kapsul dengan P milik orang lain.
+    ///
+    /// Ahli waris dan guardian juga tidak tersimpan sebagai wallet, hanya komitmen bergaram: siapa
+    /// keluarga pemilik baru terlihat ketika seorang anggota sendiri bertindak (konfirmasi, veto, klaim).
     pub fn create_capsule(
         ctx: Context<CreateCapsule>,
         commitment: [u8; 32],
@@ -56,8 +68,9 @@ pub mod sikrit {
         let capsule = &mut ctx.accounts.capsule;
 
         capsule.commitment = commitment;
-        capsule.heir = config.heir;
-        capsule.guardians = config.guardians;
+        capsule.heir_commitment = config.heir_commitment;
+        capsule.heir = Pubkey::default();
+        capsule.guardian_commitments = config.guardian_commitments;
         capsule.guardian_threshold = config.guardian_threshold;
         capsule.approvals = 0;
         capsule.vetoes = 0;
@@ -72,8 +85,7 @@ pub mod sikrit {
 
         emit!(CapsuleCreated {
             capsule: capsule_key,
-            heir: capsule.heir,
-            guardian_count: capsule.guardians.len() as u8,
+            guardian_count: capsule.guardian_commitments.len() as u8,
             guardian_threshold: capsule.guardian_threshold,
             heartbeat_interval: capsule.heartbeat_interval,
             grace_period: capsule.grace_period,
@@ -86,14 +98,22 @@ pub mod sikrit {
     ///
     /// Tidak ada signer yang diwajibkan: bukti atas x adalah satu-satunya otorisasi, sehingga transaksi
     /// boleh di-relay oleh fee payer mana pun (burner/relayer) dan wallet pemilik tidak pernah muncul.
-    /// Challenge terikat ke program, kapsul, dan `heartbeat_nonce`, jadi setiap bukti hanya berlaku sekali.
+    /// Challenge terikat ke program, kapsul, `heartbeat_nonce` dan `expires_at`: setiap bukti hanya
+    /// berlaku sekali, dan hanya sampai `expires_at` (paling lama `MAX_PROOF_LIFETIME` ke depan).
     /// Heartbeat valid saat `ClaimPending` membatalkan klaim (pemilik terbukti masih hidup).
-    pub fn heartbeat(ctx: Context<Heartbeat>, proof: SchnorrProof) -> Result<()> {
+    pub fn heartbeat(ctx: Context<Heartbeat>, proof: SchnorrProof, expires_at: i64) -> Result<()> {
         let capsule_key = ctx.accounts.capsule.key();
         let capsule = &mut ctx.accounts.capsule;
         require!(
             capsule.status != CapsuleStatus::Claimed,
             SikritError::CapsuleAlreadyClaimed
+        );
+
+        let clock = Clock::get()?;
+        require!(clock.unix_timestamp <= expires_at, SikritError::ProofExpired);
+        require!(
+            expires_at <= clock.unix_timestamp.saturating_add(MAX_PROOF_LIFETIME),
+            SikritError::ProofExpiryTooFar
         );
 
         let nonce = capsule.heartbeat_nonce;
@@ -103,11 +123,10 @@ pub mod sikrit {
             &capsule_key,
             &capsule.commitment,
             &proof.r,
-            &nonce.to_le_bytes(),
+            &schnorr::liveness_context(nonce, expires_at),
         );
         schnorr::verify(&capsule.commitment, &proof, &e)?;
 
-        let clock = Clock::get()?;
         let claim_cancelled = capsule.status == CapsuleStatus::ClaimPending;
 
         capsule.heartbeat_nonce = nonce.checked_add(1).ok_or(SikritError::NonceOverflow)?;
@@ -150,13 +169,16 @@ pub mod sikrit {
         Ok(())
     }
 
-    /// Guardian memberikan persetujuan pelepasan kapsul (satu suara per guardian per klaim)
-    pub fn guardian_confirm(ctx: Context<GuardianAction>) -> Result<()> {
+    /// Guardian memberikan persetujuan pelepasan kapsul (satu suara per guardian per klaim).
+    ///
+    /// Guardian membuktikan keanggotaannya dengan membuka komitmen di `slot` memakai `salt` dari kit;
+    /// salt tanpa tanda tangan wallet yang sama tidak berguna bagi orang lain.
+    pub fn guardian_confirm(ctx: Context<GuardianAction>, slot: u8, salt: [u8; 32]) -> Result<()> {
         let capsule = &mut ctx.accounts.capsule;
         let guardian_key = ctx.accounts.guardian.key();
 
         require!(capsule.status == CapsuleStatus::ClaimPending, SikritError::ClaimNotPending);
-        let bit = capsule.guardian_bit(&guardian_key)?;
+        let bit = capsule.guardian_bit(&guardian_key, slot, &salt)?;
         require!(capsule.approvals & bit == 0, SikritError::GuardianAlreadyApproved);
 
         capsule.approvals |= bit;
@@ -175,13 +197,13 @@ pub mod sikrit {
     /// Hanya berlaku selama grace period. Veto mengembalikan kapsul ke `Active` dan memberi pemilik
     /// satu interval heartbeat penuh. Tiap guardian hanya punya satu veto sampai pemilik membuktikan
     /// liveness lagi, sehingga guardian jahat hanya bisa menunda pewarisan secara terbatas, tidak selamanya.
-    pub fn guardian_veto(ctx: Context<GuardianAction>) -> Result<()> {
+    pub fn guardian_veto(ctx: Context<GuardianAction>, slot: u8, salt: [u8; 32]) -> Result<()> {
         let clock = Clock::get()?;
         let capsule = &mut ctx.accounts.capsule;
         let guardian_key = ctx.accounts.guardian.key();
 
         require!(capsule.status == CapsuleStatus::ClaimPending, SikritError::ClaimNotPending);
-        let bit = capsule.guardian_bit(&guardian_key)?;
+        let bit = capsule.guardian_bit(&guardian_key, slot, &salt)?;
 
         let elapsed_grace = clock.unix_timestamp.saturating_sub(capsule.claim_triggered_at);
         require!(elapsed_grace < capsule.grace_period, SikritError::VetoWindowClosed);
@@ -201,11 +223,19 @@ pub mod sikrit {
         Ok(())
     }
 
-    /// Ahli waris mencairkan/membuka kapsul setelah grace period dan threshold guardian terpenuhi
-    pub fn claim(ctx: Context<ClaimCapsule>) -> Result<()> {
+    /// Ahli waris mencairkan/membuka kapsul setelah grace period dan threshold guardian terpenuhi.
+    ///
+    /// Ahli waris membuka `heir_commitment` dengan wallet-nya dan `salt` dari kit; wallet itu lalu
+    /// disimpan di `heir`, tempat guardian mencocokkan tujuan pelepasan share.
+    pub fn claim(ctx: Context<ClaimCapsule>, salt: [u8; 32]) -> Result<()> {
         let clock = Clock::get()?;
         let capsule = &mut ctx.accounts.capsule;
+        let heir_key = ctx.accounts.heir.key();
 
+        require!(
+            capsule.heir_commitment == member_commitment(&capsule.commitment, ROLE_HEIR, &heir_key, &salt),
+            SikritError::UnauthorizedHeir
+        );
         require!(capsule.status == CapsuleStatus::ClaimPending, SikritError::ClaimNotPending);
 
         let elapsed_grace = clock.unix_timestamp.saturating_sub(capsule.claim_triggered_at);
@@ -217,10 +247,11 @@ pub mod sikrit {
         );
 
         capsule.status = CapsuleStatus::Claimed;
+        capsule.heir = heir_key;
 
         emit!(CapsuleClaimed {
             capsule: capsule.key(),
-            heir: capsule.heir,
+            heir: heir_key,
             claimed_at: clock.unix_timestamp,
         });
 
@@ -286,9 +317,9 @@ pub struct ClaimCapsule<'info> {
         mut,
         seeds = [CAPSULE_SEED, capsule.commitment.as_ref()],
         bump = capsule.bump,
-        has_one = heir @ SikritError::UnauthorizedHeir,
     )]
     pub capsule: Account<'info, Capsule>,
+    /// Diotorisasi di handler dengan membuka `heir_commitment`.
     pub heir: Signer<'info>,
 }
 
@@ -301,13 +332,17 @@ pub struct ClaimCapsule<'info> {
 pub struct Capsule {
     /// Kunci publik liveness P = x·G, sekaligus seed PDA. Tidak ada identitas wallet pemilik.
     pub commitment: [u8; 32],
+    /// `member_commitment(P, ROLE_HEIR, wallet ahli waris, salt)`: siapa ahli warisnya tersembunyi sampai klaim.
+    pub heir_commitment: [u8; 32],
+    /// Wallet yang membuka `heir_commitment` saat `claim`; `Pubkey::default()` sebelum itu.
     pub heir: Pubkey,
+    /// `member_commitment(P, ROLE_GUARDIAN, wallet guardian, salt)` per slot.
     #[max_len(MAX_GUARDIANS)]
-    pub guardians: Vec<Pubkey>,
+    pub guardian_commitments: Vec<[u8; 32]>,
     pub guardian_threshold: u8,
-    /// Bit i menyala ⇔ guardians[i] sudah menyetujui klaim yang sedang berjalan.
+    /// Bit i menyala ⇔ guardian di slot i sudah menyetujui klaim yang sedang berjalan.
     pub approvals: u8,
-    /// Bit i menyala ⇔ guardians[i] sudah memakai vetonya sejak heartbeat terakhir pemilik.
+    /// Bit i menyala ⇔ guardian di slot i sudah memakai vetonya sejak heartbeat terakhir pemilik.
     pub vetoes: u8,
     pub heartbeat_interval: i64,
     pub grace_period: i64,
@@ -322,13 +357,27 @@ pub struct Capsule {
 }
 
 impl Capsule {
-    fn guardian_bit(&self, guardian: &Pubkey) -> Result<u8> {
-        self.guardians
-            .iter()
-            .position(|g| g == guardian)
-            .map(|i| 1u8 << i)
-            .ok_or_else(|| error!(SikritError::UnauthorizedGuardian))
+    /// Bit persetujuan/veto untuk `slot`, hanya jika `guardian` + `salt` membuka komitmen di slot itu.
+    fn guardian_bit(&self, guardian: &Pubkey, slot: u8, salt: &[u8; 32]) -> Result<u8> {
+        let committed = self
+            .guardian_commitments
+            .get(usize::from(slot))
+            .ok_or_else(|| error!(SikritError::UnauthorizedGuardian))?;
+        require!(
+            *committed == member_commitment(&self.commitment, ROLE_GUARDIAN, guardian, salt),
+            SikritError::UnauthorizedGuardian
+        );
+        Ok(1u8 << slot)
     }
+}
+
+/// Komitmen bergaram atas anggota kapsul: SHA-256(MEMBER_DOMAIN ‖ P ‖ role ‖ wallet ‖ salt).
+///
+/// `salt` acak 32 byte per anggota (dibuat pemilik, dibawa di kit) membuat komitmen menyembunyikan
+/// wallet dari tebakan atas seluruh wallet Solana dan tidak bisa ditautkan antar kapsul; SHA-256
+/// mengikatnya ke satu wallet. Semua field panjangnya tetap, jadi encoding-nya tidak ambigu.
+pub fn member_commitment(capsule_commitment: &[u8; 32], role: u8, wallet: &Pubkey, salt: &[u8; 32]) -> [u8; 32] {
+    hashv(&[MEMBER_DOMAIN, capsule_commitment, &[role], wallet.as_ref(), salt]).to_bytes()
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, InitSpace)]
@@ -341,31 +390,33 @@ pub enum CapsuleStatus {
 /// Parameter kapsul. Serialisasi Borsh-nya diikat ke proof-of-possession saat `create_capsule`.
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct CapsuleConfig {
-    pub heir: Pubkey,
+    pub heir_commitment: [u8; 32],
     pub heartbeat_interval: i64,
     pub grace_period: i64,
-    pub guardians: Vec<Pubkey>,
+    pub guardian_commitments: Vec<[u8; 32]>,
     pub guardian_threshold: u8,
     pub share_hashes: Vec<[u8; 32]>,
 }
 
 impl CapsuleConfig {
+    /// Wallet di balik komitmen tidak terlihat oleh program, jadi aturan identitas (ahli waris bukan
+    /// guardian, guardian berbeda-beda) ditegakkan client saat sealing; di sini dicek bentuk komitmennya.
     fn validate(&self) -> Result<()> {
         require!(
             self.heartbeat_interval >= MIN_HEARTBEAT_INTERVAL,
             SikritError::HeartbeatIntervalTooShort
         );
         require!(self.grace_period >= MIN_GRACE_PERIOD, SikritError::GracePeriodTooShort);
-        require!(self.heir != Pubkey::default(), SikritError::InvalidHeir);
-        require!(self.guardians.len() <= MAX_GUARDIANS, SikritError::TooManyGuardians);
+        require!(self.heir_commitment != [0; 32], SikritError::InvalidHeir);
+        require!(self.guardian_commitments.len() <= MAX_GUARDIANS, SikritError::TooManyGuardians);
         require!(
-            self.guardian_threshold as usize <= self.guardians.len(),
+            self.guardian_threshold as usize <= self.guardian_commitments.len(),
             SikritError::InvalidGuardianThreshold
         );
-        for (i, guardian) in self.guardians.iter().enumerate() {
-            require!(*guardian != Pubkey::default(), SikritError::InvalidGuardian);
-            require!(*guardian != self.heir, SikritError::HeirCannotBeGuardian);
-            require!(!self.guardians[..i].contains(guardian), SikritError::DuplicateGuardian);
+        for (i, guardian) in self.guardian_commitments.iter().enumerate() {
+            require!(*guardian != [0; 32], SikritError::InvalidGuardian);
+            require!(*guardian != self.heir_commitment, SikritError::HeirCannotBeGuardian);
+            require!(!self.guardian_commitments[..i].contains(guardian), SikritError::DuplicateGuardian);
         }
         require!(self.share_hashes.len() <= MAX_SHARES, SikritError::TooManyShares);
         Ok(())
@@ -390,12 +441,20 @@ pub struct SchnorrProof {
 /// Prover (client): k acak, R = k·G, e = H(transkrip) mod ℓ, s = k + e·x mod ℓ.
 /// Verifier (program): terima iff s·G − e·P == R, dengan
 ///   e = SHA-512(domain ‖ program_id ‖ capsule ‖ P ‖ R ‖ context) mod ℓ
-/// `context` = nonce heartbeat (u64 LE) untuk liveness, atau Borsh(CapsuleConfig) untuk registrasi.
+/// `context` = nonce heartbeat (u64 LE) ‖ expires_at (i64 LE) untuk liveness, atau Borsh(CapsuleConfig)
+/// untuk registrasi.
 pub mod schnorr {
     use super::*;
     use curve25519_dalek::constants::ED25519_BASEPOINT_COMPRESSED;
     use curve25519_dalek::edwards::CompressedEdwardsY;
     use curve25519_dalek::traits::Identity;
+
+    pub fn liveness_context(nonce: u64, expires_at: i64) -> [u8; 16] {
+        let mut context = [0u8; 16];
+        context[..8].copy_from_slice(&nonce.to_le_bytes());
+        context[8..].copy_from_slice(&expires_at.to_le_bytes());
+        context
+    }
 
     pub fn challenge(
         program_id: &Pubkey,
@@ -554,7 +613,6 @@ mod curve {
 #[event]
 pub struct CapsuleCreated {
     pub capsule: Pubkey,
-    pub heir: Pubkey,
     pub guardian_count: u8,
     pub guardian_threshold: u8,
     pub heartbeat_interval: i64,
@@ -625,21 +683,21 @@ pub enum SikritError {
     HeartbeatNotExpired,
     #[msg("Klaim belum dalam status pending")]
     ClaimNotPending,
-    #[msg("Bukan guardian yang terdaftar")]
+    #[msg("Bukan guardian yang terdaftar (komitmen di slot ini tidak terbuka)")]
     UnauthorizedGuardian,
     #[msg("Grace period belum berakhir")]
     GracePeriodNotExpired,
     #[msg("Persetujuan guardian belum memenuhi threshold")]
     InsufficientGuardianApprovals,
-    #[msg("Bukan ahli waris yang terdaftar pada kapsul ini")]
+    #[msg("Bukan ahli waris yang terdaftar pada kapsul ini (komitmen tidak terbuka)")]
     UnauthorizedHeir,
-    #[msg("Ahli waris tidak valid")]
+    #[msg("Komitmen ahli waris tidak valid")]
     InvalidHeir,
-    #[msg("Guardian tidak valid")]
+    #[msg("Komitmen guardian tidak valid")]
     InvalidGuardian,
-    #[msg("Guardian terdaftar lebih dari sekali")]
+    #[msg("Komitmen guardian terdaftar lebih dari sekali")]
     DuplicateGuardian,
-    #[msg("Ahli waris tidak boleh menjadi guardian")]
+    #[msg("Komitmen ahli waris tidak boleh dipakai sebagai guardian")]
     HeirCannotBeGuardian,
     #[msg("Guardian sudah menyetujui klaim ini")]
     GuardianAlreadyApproved,
@@ -651,6 +709,10 @@ pub enum SikritError {
     CapsuleAlreadyClaimed,
     #[msg("Nonce heartbeat overflow")]
     NonceOverflow,
+    #[msg("Bukti liveness sudah kedaluwarsa")]
+    ProofExpired,
+    #[msg("Masa berlaku bukti liveness melebihi batas maksimal")]
+    ProofExpiryTooFar,
 }
 
 // -----------------------------------------------------------------------------
@@ -707,38 +769,46 @@ mod tests {
         out
     }
 
+    const EXPIRES_AT: i64 = 1_790_000_600;
+
     #[test]
     fn valid_liveness_proof_verifies() {
         let x = hash_scalar("owner");
         let p = commit(&x);
-        let proof = prove(&x, LIVENESS_DOMAIN, &CAPSULE, &0u64.to_le_bytes());
-        verify(&p, &proof, LIVENESS_DOMAIN, &CAPSULE, &0u64.to_le_bytes()).unwrap();
+        let context = schnorr::liveness_context(0, EXPIRES_AT);
+        let proof = prove(&x, LIVENESS_DOMAIN, &CAPSULE, &context);
+        verify(&p, &proof, LIVENESS_DOMAIN, &CAPSULE, &context).unwrap();
     }
 
     #[test]
-    fn proof_is_bound_to_nonce_capsule_domain_and_program() {
+    fn proof_is_bound_to_nonce_expiry_capsule_domain_and_program() {
         let x = hash_scalar("owner");
         let p = commit(&x);
-        let nonce = 0u64.to_le_bytes();
-        let proof = prove(&x, LIVENESS_DOMAIN, &CAPSULE, &nonce);
+        let context = schnorr::liveness_context(0, EXPIRES_AT);
+        let proof = prove(&x, LIVENESS_DOMAIN, &CAPSULE, &context);
 
         // Replay setelah nonce naik.
         assert_err(
-            verify(&p, &proof, LIVENESS_DOMAIN, &CAPSULE, &1u64.to_le_bytes()),
+            verify(&p, &proof, LIVENESS_DOMAIN, &CAPSULE, &schnorr::liveness_context(1, EXPIRES_AT)),
+            SikritError::ProofVerificationFailed,
+        );
+        // Masa berlaku diperpanjang oleh pihak yang menahan bukti.
+        assert_err(
+            verify(&p, &proof, LIVENESS_DOMAIN, &CAPSULE, &schnorr::liveness_context(0, EXPIRES_AT + 3600)),
             SikritError::ProofVerificationFailed,
         );
         // Kapsul lain dengan commitment yang sama.
         assert_err(
-            verify(&p, &proof, LIVENESS_DOMAIN, &Pubkey::new_unique(), &nonce),
+            verify(&p, &proof, LIVENESS_DOMAIN, &Pubkey::new_unique(), &context),
             SikritError::ProofVerificationFailed,
         );
         // Bukti liveness dipakai sebagai bukti registrasi.
         assert_err(
-            verify(&p, &proof, REGISTER_DOMAIN, &CAPSULE, &nonce),
+            verify(&p, &proof, REGISTER_DOMAIN, &CAPSULE, &context),
             SikritError::ProofVerificationFailed,
         );
         // Deployment program lain.
-        let e = schnorr::challenge(&crate::ID, LIVENESS_DOMAIN, &CAPSULE, &p, &proof.r, &nonce);
+        let e = schnorr::challenge(&crate::ID, LIVENESS_DOMAIN, &CAPSULE, &p, &proof.r, &context);
         assert_err(schnorr::verify(&p, &proof, &e), SikritError::ProofVerificationFailed);
     }
 
@@ -834,8 +904,9 @@ mod tests {
         assert!(schnorr::is_canonical(&field_modulus));
     }
 
-    /// Vektor dari sdk/liveness.ts (x, aux = 0³², nonce = 7, program = 0x11³², capsule = 0x22³²).
-    /// Mengunci format transkrip Fiat–Shamir lintas bahasa (TS prover ↔ Rust verifier).
+    /// Vektor dari sdk/liveness.ts (x, aux = 0³², nonce = 7, expires_at = 1 790 000 600,
+    /// program = 0x11³², capsule = 0x22³²). Mengunci format transkrip Fiat–Shamir lintas bahasa
+    /// (TS prover ↔ Rust verifier).
     #[test]
     fn known_answer_vector_from_typescript_sdk() {
         let x = Scalar::from_canonical_bytes(hex32(
@@ -844,24 +915,48 @@ mod tests {
         .unwrap();
         let p = hex32("bf8a3946a4fa347da1c7998a0847d8c7adc04d2a4fc2a6ad184745ee1a3109ef");
         let proof = SchnorrProof {
-            r: hex32("2454b89413395d1bef1a6985528da3f5d695ee8f5beb61759a1fb2596e9b4aef"),
-            s: hex32("0d46bc22561827abfefa34595e3e3b44ebe5fec47b4d58b2e68e1dfbde0b4a05"),
+            r: hex32("0debb193d37e14f122354eefb14a6542da19c37d5297ac9085651ea87ecae994"),
+            s: hex32("c47c8c123ecda4316a7433533f57a48da2e9d1390b3e3fda7669d3c5d0f0af00"),
         };
         assert_eq!(commit(&x), p);
         schnorr::validate_commitment(&p).unwrap();
-        verify(&p, &proof, LIVENESS_DOMAIN, &CAPSULE, &7u64.to_le_bytes()).unwrap();
-        assert_err(
-            verify(&p, &proof, LIVENESS_DOMAIN, &CAPSULE, &8u64.to_le_bytes()),
-            SikritError::ProofVerificationFailed,
+        verify(&p, &proof, LIVENESS_DOMAIN, &CAPSULE, &schnorr::liveness_context(7, EXPIRES_AT)).unwrap();
+        for context in [schnorr::liveness_context(8, EXPIRES_AT), schnorr::liveness_context(7, EXPIRES_AT + 1)] {
+            assert_err(
+                verify(&p, &proof, LIVENESS_DOMAIN, &CAPSULE, &context),
+                SikritError::ProofVerificationFailed,
+            );
+        }
+    }
+
+    /// Vektor yang dihitung ulang dengan `hashlib` Python: P = 0x33³², wallet = 0x44³², salt = 0x55³².
+    #[test]
+    fn member_commitment_known_answer_and_binding() {
+        let (p, wallet, salt) = ([0x33; 32], Pubkey::new_from_array([0x44; 32]), [0x55; 32]);
+        let guardian = member_commitment(&p, ROLE_GUARDIAN, &wallet, &salt);
+        assert_eq!(guardian, hex32("e34bf422e0d0e276e1519a96931ee0574e6a0b8b9629048ebc5e3690453820d8"));
+        assert_eq!(
+            member_commitment(&p, ROLE_HEIR, &wallet, &salt),
+            hex32("cadedb6934386496c3d769d40f491534b2e682333e674ac18b9a66625e18a709")
         );
+        // Kapsul lain, wallet lain, atau salt lain → komitmen lain.
+        assert_ne!(member_commitment(&[0x34; 32], ROLE_GUARDIAN, &wallet, &salt), guardian);
+        assert_ne!(member_commitment(&p, ROLE_GUARDIAN, &Pubkey::new_unique(), &salt), guardian);
+        assert_ne!(member_commitment(&p, ROLE_GUARDIAN, &wallet, &[0x56; 32]), guardian);
+    }
+
+    fn opening(role: u8) -> (Pubkey, [u8; 32], [u8; 32]) {
+        let wallet = Pubkey::new_unique();
+        let salt = Sha512::digest(wallet.as_ref())[..32].try_into().unwrap();
+        (wallet, salt, member_commitment(&[0x33; 32], role, &wallet, &salt))
     }
 
     fn config() -> CapsuleConfig {
         CapsuleConfig {
-            heir: Pubkey::new_unique(),
+            heir_commitment: opening(ROLE_HEIR).2,
             heartbeat_interval: MIN_HEARTBEAT_INTERVAL,
             grace_period: MIN_GRACE_PERIOD,
-            guardians: vec![Pubkey::new_unique(), Pubkey::new_unique(), Pubkey::new_unique()],
+            guardian_commitments: (0..3).map(|_| opening(ROLE_GUARDIAN).2).collect(),
             guardian_threshold: 2,
             share_hashes: vec![[7; 32]; 3],
         }
@@ -875,8 +970,8 @@ mod tests {
         let proof = prove(&x, REGISTER_DOMAIN, &CAPSULE, &original.try_to_vec().unwrap());
         verify(&p, &proof, REGISTER_DOMAIN, &CAPSULE, &original.try_to_vec().unwrap()).unwrap();
 
-        let swapped_heir = CapsuleConfig { heir: Pubkey::new_unique(), ..original.clone() };
-        let no_guardians = CapsuleConfig { guardians: vec![], guardian_threshold: 0, ..original };
+        let swapped_heir = CapsuleConfig { heir_commitment: opening(ROLE_HEIR).2, ..original.clone() };
+        let no_guardians = CapsuleConfig { guardian_commitments: vec![], guardian_threshold: 0, ..original };
         for tampered in [swapped_heir, no_guardians] {
             assert_err(
                 verify(&p, &proof, REGISTER_DOMAIN, &CAPSULE, &tampered.try_to_vec().unwrap()),
@@ -888,22 +983,57 @@ mod tests {
     #[test]
     fn config_validation() {
         config().validate().unwrap();
-        CapsuleConfig { guardians: vec![], guardian_threshold: 0, ..config() }.validate().unwrap();
+        CapsuleConfig { guardian_commitments: vec![], guardian_threshold: 0, ..config() }.validate().unwrap();
 
         let base = config();
         let cases = [
             (CapsuleConfig { heartbeat_interval: MIN_HEARTBEAT_INTERVAL - 1, ..config() }, SikritError::HeartbeatIntervalTooShort),
             (CapsuleConfig { grace_period: MIN_GRACE_PERIOD - 1, ..config() }, SikritError::GracePeriodTooShort),
-            (CapsuleConfig { heir: Pubkey::default(), ..config() }, SikritError::InvalidHeir),
-            (CapsuleConfig { guardians: (0..6).map(|_| Pubkey::new_unique()).collect(), ..config() }, SikritError::TooManyGuardians),
+            (CapsuleConfig { heir_commitment: [0; 32], ..config() }, SikritError::InvalidHeir),
+            (CapsuleConfig { guardian_commitments: (0..6).map(|_| opening(ROLE_GUARDIAN).2).collect(), ..config() }, SikritError::TooManyGuardians),
             (CapsuleConfig { guardian_threshold: 4, ..config() }, SikritError::InvalidGuardianThreshold),
-            (CapsuleConfig { guardians: vec![Pubkey::default()], guardian_threshold: 1, ..config() }, SikritError::InvalidGuardian),
-            (CapsuleConfig { guardians: vec![base.heir], guardian_threshold: 1, ..base.clone() }, SikritError::HeirCannotBeGuardian),
-            (CapsuleConfig { guardians: vec![base.guardians[0], base.guardians[0]], ..base.clone() }, SikritError::DuplicateGuardian),
+            (CapsuleConfig { guardian_commitments: vec![[0; 32]], guardian_threshold: 1, ..config() }, SikritError::InvalidGuardian),
+            (CapsuleConfig { guardian_commitments: vec![base.heir_commitment], guardian_threshold: 1, ..base.clone() }, SikritError::HeirCannotBeGuardian),
+            (CapsuleConfig { guardian_commitments: vec![base.guardian_commitments[0]; 2], ..base.clone() }, SikritError::DuplicateGuardian),
             (CapsuleConfig { share_hashes: vec![[0; 32]; MAX_SHARES + 1], ..config() }, SikritError::TooManyShares),
         ];
         for (cfg, expected) in cases {
             assert_err(cfg.validate(), expected);
         }
+    }
+
+    #[test]
+    fn guardian_must_open_its_own_slot() {
+        let (wallet, salt, committed) = opening(ROLE_GUARDIAN);
+        let (other, other_salt, other_committed) = opening(ROLE_GUARDIAN);
+        let capsule = Capsule {
+            commitment: [0x33; 32],
+            heir_commitment: opening(ROLE_HEIR).2,
+            heir: Pubkey::default(),
+            guardian_commitments: vec![other_committed, committed],
+            guardian_threshold: 1,
+            approvals: 0,
+            vetoes: 0,
+            heartbeat_interval: MIN_HEARTBEAT_INTERVAL,
+            grace_period: MIN_GRACE_PERIOD,
+            last_heartbeat: 0,
+            claim_triggered_at: 0,
+            heartbeat_nonce: 0,
+            share_hashes: vec![],
+            status: CapsuleStatus::ClaimPending,
+            bump: 255,
+        };
+        assert_eq!(capsule.guardian_bit(&wallet, 1, &salt).unwrap(), 0b10);
+        assert_eq!(capsule.guardian_bit(&other, 0, &other_salt).unwrap(), 0b01);
+        for (who, slot, salt) in [
+            (&wallet, 0, &salt),             // slot orang lain
+            (&wallet, 1, &other_salt),       // salt salah
+            (&other, 1, &salt),              // salt yang terlihat di transaksi guardian lain, signer lain
+            (&wallet, 2, &salt),             // di luar jumlah guardian
+        ] {
+            assert_err(capsule.guardian_bit(who, slot, salt).map(|_| ()), SikritError::UnauthorizedGuardian);
+        }
+        // Komitmen guardian tidak bisa dibuka sebagai ahli waris (role berbeda).
+        assert_ne!(member_commitment(&capsule.commitment, ROLE_HEIR, &wallet, &salt), committed);
     }
 }

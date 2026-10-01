@@ -22,13 +22,18 @@ function dataSegments(name: string, data: Uint8Array): { label: string; bytes: U
   const seg = (label: string, from: number, to: number, tone: string) => ({ label, bytes: data.slice(from, to), tone });
   const disc = seg("discriminator", 0, 8, "text-bone-500");
   if (name === "heartbeat") {
-    return [disc, seg("R = k·G", 8, 40, "text-verdigris-300"), seg("s = k + e·x", 40, 72, "text-verdigris-300")];
+    return [
+      disc,
+      seg("R = k·G", 8, 40, "text-verdigris-300"),
+      seg("s = k + e·x", 40, 72, "text-verdigris-300"),
+      seg("expires at (i64, in the proof)", 72, 80, "text-bone-300"),
+    ];
   }
   if (name === "create_capsule") {
     return [
       disc,
       seg("commitment P = x·G", 8, 40, "text-seal-300"),
-      seg("config (heir, timers, guardians, share hashes)", 40, data.length - 64, "text-bone-300"),
+      seg("config (sealed heir and guardian commitments, timers, share hashes)", 40, data.length - 64, "text-bone-300"),
       seg("proof-of-possession (R, s)", data.length - 64, data.length, "text-verdigris-300"),
     ];
   }

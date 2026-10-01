@@ -28,7 +28,7 @@ export function CapsuleVitals({ address, capsule, children }: { address: PublicK
     caption = t && seconds <= 0n ? "Grace period over" : "Claim open — grace period ends in";
     tone = "amber";
   } else {
-    caption = `Released to ${who(capsule.heir)}`;
+    caption = capsule.heir ? `Released to ${who(capsule.heir)}` : "Released to the heir";
   }
 
   return (

@@ -10,8 +10,8 @@ import { ActionButton, Copyable, Field, Heading, Notice, Stat, StatusChip } from
 import { Countdown, Ecg, Seal, Vital } from "../components/visuals";
 import { CLUSTER } from "../config";
 import { Actor, CAST, personaActor } from "../lib/actors";
-import { who } from "../lib/capsule";
-import { SentTransaction, sendWithRelayer } from "../lib/chain";
+import { useMailboxKit, who } from "../lib/capsule";
+import { SentTransaction, readChainTime, sendWithRelayer } from "../lib/chain";
 import { getRelayer, sendRelayed, useRelayer } from "../lib/relayer";
 import { duration, hex, short, when } from "../lib/format";
 import { useAction, useCapsule, useChainNow } from "../lib/hooks";
@@ -35,7 +35,7 @@ export function OwnerPage() {
 
   const commitment = useMemo(() => (secret ? liveness.commitmentFromSecret(secret) : undefined), [secret]);
   const address = useMemo(() => (commitment ? liveness.capsulePda(PROGRAM_ID, commitment)[0] : undefined), [commitment]);
-  const { capsule, refresh } = useCapsule(address);
+  const { capsule, error: capsuleError, refresh } = useCapsule(address);
 
   const unlock = () =>
     action.run("Deriving", async () => {
@@ -57,6 +57,11 @@ export function OwnerPage() {
 
       {!secret ? (
         <UnlockCard actor={actor} busy={action.busy} onUnlock={unlock} />
+      ) : capsule === undefined && capsuleError ? (
+        <Notice tone="error">
+          Your capsule could not be read: {capsuleError}. A capsule made by an earlier protocol version cannot be used
+          with this one{actor?.kind === "persona" ? "; reset the demo for a fresh cast" : ""}.
+        </Notice>
       ) : capsule === undefined ? (
         <div className="card p-8 text-bone-400">Looking up your capsule…</div>
       ) : capsule === null ? (
@@ -173,14 +178,6 @@ function CreateWizard({
 
   const seal = () =>
     action.run("Sealing", async () => {
-      const config: liveness.CapsuleConfigInput = {
-        heir: new PublicKey(heir.certificate!.wallet),
-        heartbeatInterval: BigInt(interval),
-        gracePeriod: BigInt(grace),
-        guardians: validGuardians.map((g) => new PublicKey(g.wallet)),
-        guardianThreshold: effectiveQuorum,
-        shareHashes: [],
-      };
       // The heir's share plus `quorum` guardian shares reconstruct: the cryptographic threshold
       // mirrors the guardian quorum the program enforces.
       const sealed = await kit.sealCapsuleKit({
@@ -190,7 +187,16 @@ function CreateWizard({
         guardians: validGuardians,
         threshold: effectiveQuorum + 1,
       });
-      config.shareHashes = sealed.shareHashes;
+      // The chain gets salted commitments to the heir and guardians, never their wallets; the salts stay in the kit.
+      const roster = kit.rosterCommitments(sealed);
+      const config: liveness.CapsuleConfigInput = {
+        heirCommitment: roster.heir,
+        heartbeatInterval: BigInt(interval),
+        gracePeriod: BigInt(grace),
+        guardianCommitments: roster.guardians,
+        guardianThreshold: effectiveQuorum,
+        shareHashes: sealed.shareHashes,
+      };
       const proof = liveness.proveRegistration(secret, PROGRAM_ID, address, config);
       // The relayer also pays the new capsule's rent (~0.004 SOL), hence the larger top-up for a browser relayer.
       const relayer = await getRelayer();
@@ -296,8 +302,9 @@ function CreateWizard({
 
         <Step n={4} title="Seal and register" done={false}>
           <p className="text-sm leading-relaxed text-bone-300">
-            One transaction, paid by the relayer: it stores <span className="mono">P</span>, the rules and one hash per
-            share, plus a proof that you know <span className="mono">x</span>. No wallet of yours signs it.
+            One transaction, paid by the relayer: it stores <span className="mono">P</span>, the rules, one hash per
+            share and a salted commitment to each family member, plus a proof that you know{" "}
+            <span className="mono">x</span>. No wallet signs it, yours or theirs, and none is written to the chain.
           </p>
           <ActionButton className="btn-seal px-6 py-3 text-base" busy={action.busy} busyLabel="Sealing" label="Seal the capsule" onClick={seal} disabled={!ready} />
         </Step>
@@ -384,14 +391,18 @@ function Dashboard({
   const now = useChainNow();
   const action = useAction();
   const mailbox = useMailbox();
+  const ownKit = useMailboxKit(address);
   const [beats, setBeats] = useState(0);
   const relayer = useRelayer();
   const t = now !== undefined ? timeline(capsule, now) : undefined;
+  const family = ownKit?.shares.map((entry) => new PublicKey(entry.holder.wallet)) ?? [];
 
   const heartbeat = () =>
     action.run("Proving", async () => {
-      const proof = liveness.proveLiveness(secret, PROGRAM_ID, address, capsule.heartbeatNonce);
-      onSent(await sendRelayed([heartbeatIx({ capsule: address, proof })]));
+      // Bound to the cluster clock: a relayer that holds the proof back finds it expired within minutes.
+      const expiresAt = (await readChainTime()) + liveness.DEFAULT_PROOF_LIFETIME;
+      const proof = liveness.proveLiveness(secret, PROGRAM_ID, address, capsule.heartbeatNonce, expiresAt);
+      onSent(await sendRelayed([heartbeatIx({ capsule: address, proof, expiresAt })]));
       setBeats((b) => b + 1);
     });
 
@@ -423,7 +434,7 @@ function Dashboard({
             )}
             {capsule.status === "claimed" && (
               <>
-                <div className="eyebrow">Released to {who(capsule.heir)}</div>
+                <div className="eyebrow">Released to {capsule.heir ? who(capsule.heir) : "the heir"}</div>
                 <p className="font-display text-3xl text-seal-300">The capsule has been claimed.</p>
               </>
             )}
@@ -455,7 +466,10 @@ function Dashboard({
             { address, label: "Your capsule (derived from P)" },
             { address: sent.transaction.feePayer!, label: "Relayer · fee payer" },
           ]}
-          absent={[{ address: actor.publicKey, label: `Your wallet (${actor.name})` }]}
+          absent={[
+            { address: actor.publicKey, label: `Your wallet (${actor.name})` },
+            ...family.map((wallet, i) => ({ address: wallet, label: `${who(wallet)}'s wallet (${i === 0 ? "heir" : "guardian"})` })),
+          ]}
         />
       )}
 
@@ -463,18 +477,18 @@ function Dashboard({
         <div className="card space-y-5 p-6 md:col-span-2">
           <div className="eyebrow">The rules you set</div>
           <div className="grid grid-cols-2 gap-5 sm:grid-cols-3">
-            <Stat label="Heir" value={who(capsule.heir)} />
+            <Stat label="Heir" value={family[0] ? who(family[0]) : "sealed"} sub="on-chain: a salted commitment" />
             <Stat label="Heartbeat every" value={duration(capsule.heartbeatInterval)} />
             <Stat label="Grace period" value={duration(capsule.gracePeriod)} />
-            <Stat label="Guardian quorum" value={`${capsule.guardianThreshold} of ${capsule.guardians.length}`} />
-            <Stat label="Heartbeats proven" value={capsule.heartbeatNonce.toString()} sub="each proof valid exactly once" />
+            <Stat label="Guardian quorum" value={`${capsule.guardianThreshold} of ${capsule.guardianCommitments.length}`} />
+            <Stat label="Heartbeats proven" value={capsule.heartbeatNonce.toString()} sub="each proof valid once, for minutes" />
             <Stat label="Last proof of life" value={<span className="text-sm">{when(capsule.lastHeartbeat)}</span>} />
           </div>
           <div className="flex flex-wrap gap-2 pt-1">
-            {capsule.guardians.map((g, i) => (
-              <span key={g.toBase58()} className="chip border-ink-600 text-bone-300">
+            {capsule.guardianCommitments.map((c, i) => (
+              <span key={hex(c)} className="chip border-ink-600 text-bone-300">
                 <Seal label={String(i + 1)} tone="life" size={16} />
-                {who(g)}
+                {family[i + 1] ? who(family[i + 1]) : `sealed ${hex(c).slice(0, 8)}…`}
                 {capsule.approvals & (1 << i) ? <span className="text-amber-glow">· confirmed</span> : null}
               </span>
             ))}

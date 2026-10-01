@@ -1,8 +1,8 @@
 # SIKRIT — Security & Code Review (`programs/sikrit`)
 
-> **Scope:** `programs/sikrit/src/lib.rs` versi awal (draft v0.1), konfigurasi build (`Anchor.toml`, `Cargo.toml`), desain kriptografi Schnorr proof-of-liveness, dan (sejak 30 Sep malam) protokol custody share di SDK client (`sdk/hpke.ts`, `sdk/shamir.ts`, `sdk/kit.ts`) — lihat §5; frontend (§6) dan relayer service `app/api/relay.ts` (§7).
-> **Tanggal:** 30 September 2026 · **Metode:** review manual (kriptografi + keamanan smart contract), kompilasi SBF nyata, 10 unit test Rust, 35 test integrasi TypeScript di LiteSVM dengan time-travel, dan benchmark compute unit.
-> **Hasil:** 18 temuan — 3 Critical, 4 High, 4 Medium, 6 Low, 1 Info (desain). Tujuh belas sudah diperbaiki di kode; SIK-11 dimitigasi di client (urutan release tetap janji guardian, bukan paksaan kriptografis). SIK-16/17 berasal dari audit akhir frontend, SIK-18 dari E2E pertama melawan devnet (§6).
+> **Scope:** `programs/sikrit/src/lib.rs` versi awal (draft v0.1), konfigurasi build (`Anchor.toml`, `Cargo.toml`), desain kriptografi Schnorr proof-of-liveness, dan (sejak 30 Sep malam) protokol custody share di SDK client (`sdk/hpke.ts`, `sdk/shamir.ts`, `sdk/kit.ts`) — lihat §5; frontend (§6), relayer service `app/api/relay.ts` (§7) dan protokol v2 (§9).
+> **Tanggal:** 30 September – 1 Oktober 2026 · **Metode:** review manual (kriptografi + keamanan smart contract), kompilasi SBF nyata, 12 unit test Rust, 73 test TypeScript (lifecycle di LiteSVM dengan time-travel, SDK, client, relayer), E2E Chrome melawan validator lokal dan devnet, dan benchmark compute unit.
+> **Hasil:** 20 temuan — 3 Critical, 4 High, 5 Medium, 7 Low, 1 Info (desain). Sembilan belas sudah diperbaiki di kode; SIK-11 dimitigasi di client (urutan release tetap janji guardian, bukan paksaan kriptografis). SIK-16/17 berasal dari audit akhir frontend, SIK-18 dari E2E pertama melawan devnet (§6), SIK-19/20 dari review protokol setelah deploy (§9).
 
 ---
 
@@ -28,6 +28,8 @@
 | SIK-16 | 🟡 Medium | Frontend: state release guardian bocor antar persona/akun → guardian kedua melihat "released" palsu dan share-nya tak pernah dikirim | ✅ Fixed (§6) |
 | SIK-17 | 🔵 Low | Frontend: app bisa di-frame di host tanpa header keamanan → clickjacking prompt tanda tangan derivasi kunci | ✅ Fixed (§6) |
 | SIK-18 | 🔵 Low | Discovery guardian (5 × `getProgramAccounts` per polling) ter-rate-limit RPC publik → guardian tak melihat kapsulnya, jalur release macet | ✅ Fixed (§6) |
+| SIK-19 | 🟡 Medium | Heir & guardian plaintext on-chain: siapa pun yang tahu wallet seorang anggota keluarga bisa menemukan kapsul pemilik dan memantau heartbeat-nya | ✅ Fixed (§9, protokol v2) |
+| SIK-20 | 🔵 Low | Bukti heartbeat tanpa masa berlaku: relayer yang menahan bukti bisa "menghidupkan" pemilik yang sudah diam sekali lagi | ✅ Fixed (§9, protokol v2) |
 
 Nomor baris di bawah merujuk ke **draft awal** `lib.rs`.
 
@@ -46,14 +48,14 @@ e = SHA-512(domain ‖ program_id ‖ capsule ‖ P ‖ R ‖ context) mod ℓ
 domain  = "SIKRIT:liveness:v1"            context = heartbeat_nonce (u64 LE)
 ```
 
-`heartbeat_nonce` naik setiap heartbeat sukses → setiap bukti hanya berlaku sekali.
-**Test:** `rejects a replayed proof, so nobody can keep a dead owner 'alive'`, `rejects proofs bound to a stale or future nonce`, `proof_is_bound_to_nonce_capsule_domain_and_program` (Rust).
+`heartbeat_nonce` naik setiap heartbeat sukses → setiap bukti hanya berlaku sekali. (Protokol v2 menambahkan `expires_at` ke context dan menaikkan domain ke `v2`, lihat SIK-20.)
+**Test:** `rejects a replayed proof, so nobody can keep a dead owner 'alive'`, `rejects proofs bound to a stale or future nonce`, `proof_is_bound_to_nonce_expiry_capsule_domain_and_program` (Rust).
 
 ### SIK-02 🔴 Double-voting guardian (CWE-837: Improper Enforcement of a Single, Unique Action)
 
 **Lokasi:** `lib.rs:140` — `guardian_approvals.saturating_add(1)`
 **Masalah:** tidak dicatat guardian mana yang sudah menyetujui. Satu guardian (atau satu kunci guardian yang bocor) cukup memanggil `guardian_confirm` sebanyak `threshold` kali → skema N-of-M runtuh menjadi 1-of-M. Kolusi satu guardian + ahli waris = pelepasan dini.
-**Perbaikan:** bitmap `approvals: u8` (bit ke-i = `guardians[i]`), suara ganda ditolak dengan `GuardianAlreadyApproved`.
+**Perbaikan:** bitmap `approvals: u8` (bit ke-i = guardian di slot i; sejak v2 slot dibuka dengan komitmennya, SIK-19), suara ganda ditolak dengan `GuardianAlreadyApproved`.
 **Test:** `counts each guardian once, so one guardian cannot satisfy a 2-of-3 threshold alone`.
 
 ### SIK-03 🔴 Verifikasi Schnorr tidak bisa berjalan on-chain (blocker)
@@ -102,7 +104,7 @@ domain  = "SIKRIT:liveness:v1"            context = heartbeat_nonce (u64 LE)
 
 **Lokasi:** `lib.rs:39` (commitment diterima apa adanya)
 **Masalah:** Ed25519 punya cofactor 8. Dengan `P` berorde kecil (identitas, byte all-zero = titik orde 4, dll.), bukti bisa dipalsukan tanpa mengetahui `x` (peluang ≥ 1/8 per percobaan) → siapa pun bisa menjaga kapsul "hidup". Titik mixed-torsion `x·G + T` membuat bukti pemilik sendiri gagal 7/8 kali. Tanpa proof-of-possession, orang bisa mendaftarkan `P` milik orang lain atau menyerobot (front-run) PDA dengan konfigurasi berbeda.
-**Perbaikan:** `P` wajib encoding kanonik, bukan identitas, dan di subgrup prima (`ℓ·P = O`, dihitung sebagai `(ℓ−1)·P + P` karena syscall hanya menerima skalar kanonik). `create_capsule` mensyaratkan bukti Schnorr dengan domain `SIKRIT:register:v1` yang mengikat **seluruh** `Borsh(CapsuleConfig)`, sehingga bukti tidak bisa dipindah ke heir/guardian lain.
+**Perbaikan:** `P` wajib encoding kanonik, bukan identitas, dan di subgrup prima (`ℓ·P = O`, dihitung sebagai `(ℓ−1)·P + P` karena syscall hanya menerima skalar kanonik). `create_capsule` mensyaratkan bukti Schnorr dengan domain `SIKRIT:register:v1` (kini `v2`) yang mengikat **seluruh** `Borsh(CapsuleConfig)`, sehingga bukti tidak bisa dipindah ke heir/guardian lain.
 **Test:** `rejects identity, small-order, mixed-torsion and non-canonical commitments`, `rejects a proof-of-possession made without the secret`, `rejects a front-runner replaying the owner's proof-of-possession with a different heir`, `commitment_must_be_canonical_prime_order_point` (Rust, 8 titik torsi).
 
 ### SIK-08 🟡 Validasi himpunan guardian (CWE-20)
@@ -111,6 +113,7 @@ domain  = "SIKRIT:liveness:v1"            context = heartbeat_nonce (u64 LE)
 **Masalah:** guardian duplikat (satu orang = beberapa suara), ahli waris sebagai guardian (menyetujui klaimnya sendiri), dan `Pubkey::default()` (System Program, tak bisa tanda tangan) diterima.
 **Perbaikan:** `CapsuleConfig::validate()` menolak semuanya dengan error spesifik (`DuplicateGuardian`, `HeirCannotBeGuardian`, `InvalidGuardian`, `InvalidHeir`).
 **Test:** `rejects invalid configurations` (9 kasus), `config_validation` (Rust).
+**Catatan v2:** sejak roster disegel (SIK-19) program hanya melihat komitmen, jadi pemeriksaan di atas berlaku pada komitmen (nol, ganda, komitmen ahli waris dipakai guardian). Aturan identitasnya (ahli waris bukan guardian, wallet berbeda-beda) kini ditegakkan client saat sealing (`sealCapsuleKit` menolak wallet/inbox ganda). Client yang curang hanya bisa melemahkan kuorum kapsul pemiliknya sendiri, tidak menyentuh pengguna lain.
 
 ### SIK-09 🔵 Kalkulasi `space` manual
 
@@ -139,18 +142,23 @@ domain  = "SIKRIT:liveness:v1"            context = heartbeat_nonce (u64 LE)
 
 ## 3. Spesifikasi Protokol Setelah Perbaikan
 
-### Transkrip Fiat–Shamir
+### Transkrip Fiat–Shamir (protokol v2)
 
 ```
 e = SHA-512(domain ‖ program_id ‖ capsule ‖ P ‖ R ‖ context) mod ℓ        (wide reduction, 64 byte)
 Prover : k = hedged nonce (x, aux acak, transkrip), R = k·G, s = k + e·x mod ℓ
 Verifier: s kanonik (< ℓ), R titik valid, dan  s·G − e·P == R  (dibandingkan byte-per-byte, encoding kanonik)
 
-Registrasi : domain = "SIKRIT:register:v1", context = Borsh(CapsuleConfig)
-Liveness   : domain = "SIKRIT:liveness:v1", context = heartbeat_nonce (u64 little-endian)
+Registrasi : domain = "SIKRIT:register:v2", context = Borsh(CapsuleConfig)
+Liveness   : domain = "SIKRIT:liveness:v2", context = heartbeat_nonce (u64 LE) ‖ expires_at (i64 LE)
+             diterima hanya jika now ≤ expires_at ≤ now + 3600 (Clock sysvar)
+
+Anggota    : c = SHA-256("SIKRIT:member:v1" ‖ P ‖ role ‖ wallet ‖ salt),  role 0 = ahli waris, 1 = guardian,
+             salt 32 byte acak per anggota (di kit); dibuka oleh guardian_confirm/veto(slot, salt) dan claim(salt)
+             dengan wallet = signer
 ```
 
-Kedua domain sama panjang (18 byte) dan berbeda isi, sehingga tidak ada ambiguitas antar-transkrip. Format ini dikunci lintas bahasa oleh known-answer vector yang sama di `tests/sikrit.ts` (prover TS) dan unit test Rust (verifier).
+Kedua domain Schnorr sama panjang (18 byte) dan berbeda isi, sehingga tidak ada ambiguitas antar-transkrip; semua field komitmen anggota panjangnya tetap. Format ini dikunci lintas bahasa oleh known-answer vector yang sama di `tests/sikrit.ts` (prover TS) dan unit test Rust (verifier); komitmen anggota punya vektor sendiri yang dihitung ulang dengan Python `hashlib`.
 
 ### State machine
 
@@ -162,20 +170,20 @@ stateDiagram-v2
     ClaimPending --> ClaimPending: guardian_confirm (1 suara per guardian)
     ClaimPending --> Active: heartbeat (pemilik hidup, batalkan klaim)
     ClaimPending --> Active: guardian_veto (dalam grace, 1x per guardian per epoch liveness)
-    ClaimPending --> Claimed: claim (heir, grace lewat, approvals >= threshold)
+    ClaimPending --> Claimed: claim (heir membuka komitmennya, grace lewat, approvals >= threshold)
     Claimed --> [*]
 ```
 
-### Biaya compute (LiteSVM, binary SBF asli)
+### Biaya compute (LiteSVM, binary SBF asli, protokol v2)
 
 | Instruksi | CU (maks teramati) |
 |---|---|
-| `create_capsule` (termasuk validasi ℓ·P dan proof-of-possession) | ~68.000–74.000 (bervariasi: pencarian bump PDA bergantung commitment) |
-| `heartbeat` | 40.645 |
-| `trigger_claim` | 6.935 |
-| `guardian_confirm` | 7.054 |
-| `guardian_veto` | 6.562 |
-| `claim` | 7.323 |
+| `create_capsule` (termasuk validasi ℓ·P dan proof-of-possession) | ~66.000–74.000 (bervariasi: pencarian bump PDA bergantung commitment) |
+| `heartbeat` (termasuk cek masa berlaku) | 41.447 |
+| `trigger_claim` | 7.568 |
+| `guardian_confirm` (termasuk SHA-256 pembuka komitmen) | 8.015 |
+| `guardian_veto` | 7.558 |
+| `claim` (termasuk SHA-256 pembuka komitmen) | 8.287 |
 
 Semua di bawah budget default 200.000 CU per instruksi → tidak perlu instruksi ComputeBudget.
 
@@ -187,7 +195,7 @@ Semua di bawah budget default 200.000 CU per instruksi → tidak perlu instruksi
 |---|---|---|
 | R1 | Waktu heartbeat tetap publik | `last_heartbeat` dan timestamp transaksi terlihat oleh siapa pun yang tahu alamat kapsul (termasuk ahli waris & guardian). Yang disembunyikan adalah **siapa** (tidak ada tautan ke wallet), bukan **kapan**. Roadmap v2: bukti keanggotaan anonim (ring signature / Groth16) agar heartbeat tidak menunjuk kapsul tertentu. |
 | R2 | Tautan lewat fee payer | Jika wallet pemilik membayar `create_capsule`/`heartbeat`, transaksi itu menautkan wallet ke kapsul. Frontend harus memakai fee payer terpisah (burner/relayer). v2: relayer yang dibayar dari saldo kapsul. |
-| R3 | Heir & guardian publik | Pubkey ahli waris dan guardian tersimpan plaintext. v2: simpan komitmen hash + salt, dibuka saat aksi. |
+| R3 | Roster tersegel, tapi tidak sepenuhnya tak terlihat | **Sejak v2 (SIK-19)** ahli waris & guardian hanya komitmen bergaram; wallet anggota baru muncul saat ia sendiri bertindak (guardian konfirmasi/veto, ahli waris klaim). Yang tetap publik: jumlah guardian, kuorum, interval, grace. File kit menyebut seluruh keluarga (wallet + salt), jadi kit hanya untuk para pemegang; kit yang bocor membuka roster (bukan rahasianya). Roadmap: kit "buta" yang menyimpan identitas di dalam amplop HPKE masing-masing pemegang. |
 | R4 | Upgrade authority | Program Solana dapat di-upgrade oleh deployer. Di devnet (deploy 1 Okt 2026) authority = satu hot key `FNNYNGG688Y2wp2Nnb7K37ZsBTBF2HAFVFSxUh8iVd5N`. Upgrade jahat (atau kunci bocor) bisa melonggarkan timer → ahli waris mengklaim lebih awal → guardian me-release; rahasia tetap butuh share ahli waris + kuorum guardian, tetapi gerbang "pemilik diam" hilang. Untuk mainnet: authority ke multisig (Squads) dengan timelock, build terverifikasi (`solana-verify`), lalu immutable setelah audit eksternal. |
 | R5 | Penundaan oleh guardian jahat | Terbatas `jumlah_guardian × (interval + grace)`. Jika ingin lebih ketat: veto butuh threshold guardian. |
 | R6 | Toolchain legacy | Anchor 0.30.x menghasilkan SBPF v0. Agave 4.3 sudah memuat feature gate SIMD-0500 (menonaktifkan deploy SBPF v0–v2) yang **belum aktif** di devnet/mainnet per 30 Sep 2026; deploy devnet 1 Okt 2026 berhasil. Gate itu memblokir deploy/upgrade baru, bukan eksekusi program yang sudah ada — tetapi setelah aktif, perbaikan bug butuh build SBPF v3. Setelah hackathon, migrasi ke Anchor 1.x (SBPF v3). |
@@ -201,11 +209,12 @@ Semua di bawah budget default 200.000 CU per instruksi → tidak perlu instruksi
 | R14 | Advisory npm transitif | Dicek ulang 1 Okt 2026 (`npm audit --omit=dev`). Root: `toml` ≤ 4.1.2 (via `@anchor-lang/core`, hanya dipakai test suite untuk membaca workspace Anchor; tidak masuk app) dan `uuid` < 11.1.1. App: 10 *moderate*, semuanya rantai `uuid` lewat `@solana/web3.js` (`jayson` → uuid 8, `rpc-websockets` → uuid 14) dan wallet adapter yang bergantung padanya. Advisory uuid (GHSA-w5hq-g745-h8pq) hanya terpicu bila argumen `buf` diberikan ke v3/v5/v6; kedua pemanggil hanya membuat ID request/socket tanpa `buf`. Tidak ada perbaikan non-breaking; dipantau. |
 | R15 | Kolusi guardian tanpa ahli waris | Kit memakai Shamir k = kuorum + 1 atas n = 1 + jumlah guardian. Kalau jumlah guardian ≥ k (mis. 3 guardian, kuorum 2 → k = 3), **k guardian yang berkolusi bisa membuka rahasia tanpa ahli waris dan sebelum klaim on-chain**. Ini sifat bawaan skema threshold, dan sekaligus jalur pemulihan R13. Ahli waris sendirian atau kuorum guardian saja (< k) tidak bisa. Wizard menampilkan peringatan ini setiap kali jalur kolusi tersebut ada; pemilik yang tidak menginginkannya bisa memilih kuorum = semua guardian (k = jumlah guardian + 1, ahli waris selalu dibutuhkan, tapi R13 hilang). |
 | R16 | Kunci demo di localStorage | Mode demo menyimpan keypair persona dan relayer di `localStorage` browser (hot key, terbaca oleh script apa pun di origin itu). Hanya untuk devnet/localnet dan dilabeli demo di UI; CSP produksi (`script-src 'self'`) membatasi XSS. Wallet sungguhan tidak pernah menyimpan kunci di app: kunci liveness & inbox hanya di memori, diturunkan ulang dari tanda tangan. |
-| R17 | Guardian memercayai RPC-nya | App guardian me-release setelah RPC melaporkan status `Claimed`. RPC jahat atau terkompromi (mis. dikendalikan ahli waris yang tak sabar) bisa melaporkan `Claimed` lebih awal. Share tetap hanya terbuka untuk inbox ahli waris yang tersertifikasi, jadi serangan ini butuh kolusi ahli waris + RPC dan hanya mengenai guardian yang memakai RPC itu. Mitigasi sekarang: guardian mengecek transaksi `claim` di explorer sebelum release; roadmap: app memverifikasi status lewat ≥ 2 RPC independen. |
+| R17 | Guardian memercayai RPC-nya | App guardian me-release setelah RPC melaporkan status `Claimed`. RPC jahat atau terkompromi (mis. dikendalikan ahli waris yang tak sabar) bisa melaporkan `Claimed` lebih awal. Share tetap hanya terbuka untuk inbox ahli waris yang tersertifikasi, jadi serangan ini butuh kolusi ahli waris + RPC dan hanya mengenai guardian yang memakai RPC itu. Sejak v2 tujuan release terikat ke ahli waris yang **dikomit** (wallet + salt di kit cocok dengan komitmen on-chain); RPC yang melaporkan ahli waris lain ditolak, jadi RPC jahat tidak bisa membelokkan share ke pihak ketiga. Mitigasi sekarang: guardian mengecek transaksi `claim` di explorer sebelum release; roadmap: app memverifikasi status lewat ≥ 2 RPC independen. |
 
 ### Catatan kejujuran klaim (PITCH.md)
 
 - ✅ Aman diklaim: *"Heartbeat SIKRIT adalah zero-knowledge proof of knowledge (Schnorr/Fiat–Shamir) dengan kunci liveness khusus; tidak ada wallet atau identitas pemilik di state, event, maupun instruksi heartbeat, dan siapa pun bisa me-relay-nya."*
+- ✅ Aman diklaim (v2): *"Selama pemilik masih hidup, chain tidak menyimpan satu pun wallet keluarganya: ahli waris dan guardian hanya komitmen bergaram, yang baru terbuka ketika anggota itu sendiri bertindak."* Dibuktikan E2E: di devnet, wallet ahli waris hanya muncul di transaksi klaimnya, guardian hanya di konfirmasinya, dan guardian yang tidak bertindak tidak muncul sama sekali.
 - ⚠️ Perlu dikoreksi: PITCH §4 menyebut heartbeat "tanpa reveal siapa, **kapan**, di address mana", dan one-liner menyebut guardian & ahli waris "tidak pernah tahu kamu masih hidup". Waktu heartbeat tetap publik (R1), dan ahli waris/guardian yang mengetahui alamat kapsul bisa melihat `last_heartbeat`. Formulasi yang aman: *"liveness tidak bisa ditautkan ke identitas/wallet pemilik"*.
 - ℹ️ Schnorr NIZK ≈ tanda tangan Schnorr dengan kunci sekali-pakai-tujuan. Juri kriptografi akan menghargai bila ini dinyatakan terbuka: kekuatannya ada pada **unlinkability + anti-replay + domain separation**, bukan pada SNARK.
 
@@ -225,7 +234,7 @@ share_0 → ahli waris, share_{1+g} → guardian g, k − 1 = kuorum guardian
 ### SIK-12 🟠 Kunci enkripsi tanpa autentikasi (CWE-322: Key Exchange without Entity Authentication)
 
 **Masalah:** spec awal hanya menyebut "enkripsi share ke pubkey heir" tanpa menjelaskan dari mana pemilik mendapatkan kunci enkripsi ahli waris/guardian. Kunci enkripsi (X25519) bukan kunci wallet, jadi harus dikirim lewat kanal off-chain. Penyerang yang menukar kunci di kanal itu (atau di file kit) menerima share: saat setup (pemilik menyegel ke kunci penyerang) maupun saat release (guardian me-re-seal ke "ahli waris" palsu). Dengan mengganti kunci semua pemegang, penyerang mendapat ≥ k share.
-**Perbaikan:** *inbox certificate* — tanda tangan wallet pemegang atas `"SIKRIT inbox certificate v1: <hex inbox>"`. `sealCapsuleKit` menolak sertifikat tidak valid serta wallet/inbox ganda; `verifyKit` mencocokkan wallet pemegang dengan `heir`/`guardians` on-chain secara berurutan; `releaseShare` hanya menyegel ke inbox yang disertifikasi wallet `heir` on-chain, hanya jika kapsul `Claimed`, dan hanya untuk share guardian.
+**Perbaikan:** *inbox certificate* — tanda tangan wallet pemegang atas `"SIKRIT inbox certificate v1: <hex inbox>"`. `sealCapsuleKit` menolak sertifikat tidak valid serta wallet/inbox ganda; `verifyKit` mencocokkan wallet pemegang dengan `heir`/`guardians` on-chain secara berurutan (sejak v2: wallet + salt pemegang harus membuka komitmen heir/guardian on-chain, SIK-19); `releaseShare` hanya menyegel ke inbox yang disertifikasi wallet ahli waris yang dikomit on-chain, hanya jika kapsul `Claimed`, dan hanya untuk share guardian.
 **Test:** `carries inbox keys in wallet-signed invites; a swapped key or wallet is rejected`, `guardians release only after the claim, only to the on-chain heir, and only their own share`, `verifies a kit against the capsule's commitment, share hashes, heir and guardians on-chain`, `refuses unsafe parameters`.
 
 ### SIK-13 🟡 Rekonstruksi Shamir tanpa integritas (CWE-354)
@@ -294,6 +303,9 @@ sebelumnya masih berjalan atau tab tersembunyi; badge relayer tidak lagi memangg
 **Test:** unit test *finds a guardian's capsules with a single getProgramAccounts…* (RPC tiruan yang menerapkan
 `dataSize` + `dataSlice` atas akun kapsul LiteSVM asli, termasuk byte mirip kunci setelah panjang vektor); probe ulang:
 3 query per 30 detik, 0 × 429; `npm run e2e:devnet` lulus (141 detik, 0 × 429).
+**Sejak v2 (SIK-19):** chain tidak lagi menyimpan wallet guardian, jadi discovery lewat `getProgramAccounts` dihapus
+seluruhnya. Ahli waris dan guardian menemukan kapsulnya dari kit (mailbox demo atau file yang diimpor) dan app hanya
+membaca akun-akun itu (`fetchCapsule` + subscription), tanpa query yang dibatasi RPC publik.
 
 ### Hal lain yang dicek (tanpa temuan)
 
@@ -342,12 +354,81 @@ tersisa dicatat sebagai R18.
 
 ```bash
 npm run build                # anchor build: SBF + IDL (Solana 1.18.17, Anchor CLI 0.30.2)
-npm run test:rust            # 10 unit test verifier Schnorr + validasi config
-npm test                     # 68 test: lifecycle di LiteSVM + SDK + client + relayer service (Node 24 LTS)
+npm run test:rust            # 12 unit test: verifier Schnorr, komitmen anggota, validasi config, vektor lintas bahasa
+npm test                     # 73 test: lifecycle di LiteSVM + SDK + client + relayer service (Node 24 LTS)
 npm run typecheck
-cd app && npm run e2e        # E2E Chrome: seluruh cerita warisan + cek privasi on-chain (SIK-16)
+cd app && npm run e2e        # E2E Chrome: seluruh cerita warisan + cek privasi on-chain (SIK-16, SIK-19)
 cd app && npm run e2e:devnet # cerita yang sama lewat bundle produksi + relayer service melawan devnet (SIK-18, §7)
 RELAYER=browser npm run e2e:devnet  # sama, dengan relayer in-browser (fallback GitHub Pages)
 ```
 
 Detail toolchain ada di `docs/DEVELOPMENT.md`.
+
+---
+
+## 9. Protokol v2: Roster Tersegel & Bukti Berumur Pendek (1 Okt 2026 malam)
+
+Review ulang protokol setelah deploy devnet, dengan pertanyaan: *apa yang bisa dipelajari penyerang yang menargetkan satu
+orang tertentu?* Dua temuan, keduanya diperbaiki dengan satu upgrade protokol (program, SDK, kit v2, app) dan
+di-deploy ulang ke devnet dengan program ID yang sama.
+
+### SIK-19 🟡 Roster plaintext menautkan pemilik lewat keluarganya (CWE-359)
+
+**Masalah:** pemilik tidak pernah muncul on-chain, tetapi `heir` dan `guardians` tersimpan sebagai wallet plaintext
+(sebelumnya diterima sebagai R3 "by design"). Penyerang yang menargetkan orang kaya tertentu biasanya tahu atau bisa
+menemukan wallet keluarganya: analisis chain atas transfer pemilik → anak, atau wallet publik seorang notaris. Satu
+`getProgramAccounts` dengan filter `memcmp` di offset `heir` (dulu disediakan SDK sendiri, `findCapsulesByHeir`)
+menemukan kapsul si pemilik; sejak itu setiap heartbeat-nya terbaca: kapan ia terakhir hidup, dan sejak kapan ia diam.
+Itulah informasi yang ingin disembunyikan SIKRIT, bocor lewat orang-orang terdekatnya. Wallet guardian yang sama di
+banyak kapsul juga memetakan siapa menjaga siapa.
+**Perbaikan (protokol v2):**
+- State dan `CapsuleConfig` menyimpan `heir_commitment` dan `guardian_commitments`, dengan
+  `c = SHA-256("SIKRIT:member:v1" ‖ P ‖ role ‖ wallet ‖ salt)` dan salt 32 byte acak per anggota yang dibuat pemilik
+  dan dibawa di kit (kit v2). Salt 256 bit membuat komitmen *hiding* terhadap tebakan atas seluruh wallet Solana;
+  SHA-256 membuatnya *binding* ke satu wallet; `P` dan salt per kapsul membuat anggota yang sama tidak tertaut antar
+  kapsul; `role` memisahkan komitmen ahli waris dan guardian; semua field panjangnya tetap.
+- `guardian_confirm(slot, salt)` / `guardian_veto(slot, salt)` membuka komitmen di slot itu dengan wallet signer;
+  `claim(salt)` membuka komitmen ahli waris lalu menyimpan wallet itu di `heir` (sebelumnya `Pubkey::default()`), tempat
+  guardian mencocokkan tujuan release. Salt yang terlihat di transaksi seorang guardian tidak berguna bagi orang lain:
+  ia terikat ke wallet yang harus menandatangani.
+- Event `CapsuleCreated` tidak lagi memuat ahli waris. SDK membuang discovery berdasarkan wallet; ahli waris dan
+  guardian menemukan kapsulnya dari kit.
+- `releaseShare` mengikat tujuan release ke ahli waris yang **dikomit** (wallet + salt di kit cocok dengan komitmen
+  on-chain), bukan ke apa pun yang dilaporkan RPC: RPC yang menyebut ahli waris lain ditolak (memperkecil R17).
+
+**Yang tetap terlihat (R3):** jumlah guardian dan kuorum, timer, waktu heartbeat (R1), dan setiap anggota pada saat ia
+bertindak. File kit menyebut seluruh keluarga, jadi hanya untuk para pemegang.
+**Test:** `hides the heir and guardians behind salted commitments that link to no wallet and no other capsule`,
+`creates a capsule addressed only by its liveness commitment` (byte akun & event tanpa wallet keluarga),
+`makes each guardian open its own commitment: no other slot, no wrong salt, no copied opening`,
+`rejects anyone but the committed heir, and the heir without the kit's salt`, cerita E2E "Bapak A" (akun kapsul tidak
+memuat wallet keluarga sampai klaim, lalu hanya ahli waris), test kit v2 (salt per pemegang, `verifyKit` atas komitmen,
+RPC yang berbohong soal ahli waris), unit test Rust `member_commitment_known_answer_and_binding` (vektor Python) dan
+`guardian_must_open_its_own_slot`, serta E2E browser: di chain, Sari hanya muncul di transaksi klaimnya, Budi dan Dewi
+hanya di konfirmasi masing-masing, Rizal (guardian yang tidak bertindak) tidak muncul sama sekali.
+
+### SIK-20 🔵 Bukti heartbeat tanpa masa berlaku (CWE-294 / CWE-613)
+
+**Masalah:** bukti terikat ke `heartbeat_nonce`, jadi tidak bisa di-replay setelah dipakai, tetapi bukti yang **belum**
+pernah sampai ke chain tetap berlaku selamanya. Relayer (atau leader) yang menahan heartbeat terakhir pemilik, lalu
+menyampaikan pesan gagal, memegang satu bukti valid: jika pemilik wafat sebelum heartbeat berikutnya mendarat, bukti itu
+bisa dipakai kapan saja untuk "menghidupkan" kapsul sekali lagi atau membatalkan klaim yang sedang berjalan, menunda
+pewarisan ≤ satu interval + grace. Akibat lain: `last_heartbeat` hanya membuktikan pemilik hidup *setelah nonce
+sebelumnya*, bukan menjelang waktu yang tercatat.
+**Perbaikan:** context liveness = `nonce ‖ expires_at`; program menerima hanya jika
+`now ≤ expires_at ≤ now + MAX_PROOF_LIFETIME` (3600 detik, dari Clock sysvar). App memberi masa berlaku 10 menit dari jam
+cluster. Bukti yang ditahan mati dalam hitungan menit, dan `expires_at` tidak bisa diubah karena ikut di challenge.
+Domain dinaikkan ke `SIKRIT:liveness:v2` / `SIKRIT:register:v2`.
+**Test:** `binds every proof to a short expiry: a withheld proof dies, and nobody can stretch it` (kedaluwarsa,
+diperpanjang → bukti gagal, batas 3600 inklusif di kedua ujung), `rejects a replayed proof…` (replay langsung → nonce,
+replay 30 hari kemudian → kedaluwarsa), `proof_is_bound_to_nonce_expiry_capsule_domain_and_program` dan vektor lintas
+bahasa baru (Rust).
+
+### Dampak upgrade
+
+- Layout akun berubah (605 → 637 byte). Kapsul v1 di devnet (hanya data uji E2E) tidak bisa dibaca program v2;
+  `decodeCapsule` menolaknya dengan pesan "older protocol version" dan app menampilkannya, bukan memuat selamanya.
+- Kit v1 ditolak `decodeKit` (versi 2 wajib); domain kit lain (`payload`, `share`, `release`, `share-hash`, `inbox`)
+  tidak berubah.
+- Biaya: `heartbeat` +~430 CU (cek masa berlaku, context 16 byte), `guardian_confirm`/`veto`/`claim` +~600–1.000 CU
+  (SHA-256 syscall). Semua tetap jauh di bawah budget default.

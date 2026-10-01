@@ -125,9 +125,10 @@ export function Home() {
           </div>
         </div>
         <p className="max-w-3xl text-sm leading-relaxed text-bone-500">
-          Honest limits: the time of each heartbeat is public, and so are the heir's and guardians' addresses. What no
-          observer can learn is which wallet — which person — the capsule belongs to. The full threat model and eighteen
-          self-audit findings are in the security review.
+          Honest limits: the time of each heartbeat is public, and a family member becomes visible the moment they act
+          (a guardian confirming, the heir claiming). What no observer can learn is which wallet, which person, the
+          capsule belongs to, or who stands to inherit it before they claim. The full threat model and every self-audit
+          finding are in the security review.
         </p>
       </section>
 
@@ -137,7 +138,7 @@ export function Home() {
           ["41k", "compute units to verify a heartbeat proof"],
           ["0", "owner wallets in any capsule transaction"],
           ["5,000", "lamports per heartbeat — no token"],
-          ["68", "tests, incl. RFC 9180 & FIPS-197 vectors"],
+          ["73", "tests, incl. RFC 9180 & FIPS-197 vectors"],
         ].map(([figure, caption], i) => (
           <div key={caption} className="space-y-2 border-l border-ink-700 pl-5 animate-rise" style={{ animationDelay: `${i * 80}ms` }}>
             <div className="font-display text-5xl text-bone-50">{figure}</div>

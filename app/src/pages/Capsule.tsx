@@ -63,10 +63,28 @@ export function CapsulePage({ address }: { address: string }) {
                 <dt className="text-bone-500">Liveness key P</dt>
                 <dd className="mono break-all text-bone-300">{hex(capsule.commitment)}</dd>
                 <dt className="text-bone-500">Heir</dt>
-                <dd><AddressLink address={capsule.heir.toBase58()} label={who(capsule.heir)} /></dd>
+                <dd className="space-y-1">
+                  {capsule.heir ? (
+                    <div>
+                      <AddressLink address={capsule.heir.toBase58()} label={who(capsule.heir)} />{" "}
+                      <span className="text-xs text-bone-500">revealed by the claim</span>
+                    </div>
+                  ) : (
+                    <div className="text-bone-300">sealed: a salted commitment</div>
+                  )}
+                  <div className="mono truncate text-bone-500">{hex(capsule.heirCommitment)}</div>
+                </dd>
                 <dt className="text-bone-500">Guardians</dt>
-                <dd className="flex flex-wrap gap-x-3 gap-y-1">
-                  {capsule.guardians.map((g) => <AddressLink key={g.toBase58()} address={g.toBase58()} label={who(g)} />)}
+                <dd className="space-y-1">
+                  <div className="text-bone-300">
+                    {capsule.guardianCommitments.length} sealed, {capsule.guardianThreshold} must confirm
+                  </div>
+                  {capsule.guardianCommitments.map((c, i) => (
+                    <div key={hex(c)} className="mono flex gap-2 text-bone-500">
+                      <span className="truncate">{hex(c)}</span>
+                      {capsule.approvals & (1 << i) ? <span className="shrink-0 text-amber-glow">confirmed</span> : null}
+                    </div>
+                  ))}
                 </dd>
                 <dt className="text-bone-500">Last proof of life</dt>
                 <dd className="text-bone-300">{when(capsule.lastHeartbeat)}</dd>
@@ -78,14 +96,19 @@ export function CapsulePage({ address }: { address: string }) {
                 </dd>
               </dl>
               <p className="text-xs leading-relaxed text-bone-500">
-                Heir and guardian addresses and the time of the last heartbeat are public by design (see R1/R3 in the
-                security review). What they cannot reveal is who the owner is.
+                The time of the last heartbeat is public by design (R1 in the security review). The heir and guardians
+                are salted commitments: a family member shows up only by acting (a guardian confirming or vetoing, the
+                heir claiming), and the owner never does.
               </p>
             </section>
             <section className="card ledger space-y-4 p-6">
               <div className="eyebrow">Not on-chain, anywhere</div>
               <ul className="space-y-3 text-sm text-bone-300">
                 <li className="flex items-center justify-between gap-3">The owner's wallet <span className="redact w-24" /></li>
+                <li className="flex items-center justify-between gap-3">
+                  {capsule.heir ? "The heir's wallet, until the claim" : "Who the heir is"} <span className="redact w-20" />
+                </li>
+                <li className="flex items-center justify-between gap-3">Guardians who have not acted <span className="redact w-24" /></li>
                 <li className="flex items-center justify-between gap-3">The owner's liveness secret <span className="redact w-20" /></li>
                 <li className="flex items-center justify-between gap-3">The sealed secret <span className="redact w-28" /></li>
                 <li className="flex items-center justify-between gap-3">Any share, even encrypted <span className="redact w-16" /></li>
