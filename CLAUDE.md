@@ -48,7 +48,12 @@ SIKRIT/
 │   ├── liveness.ts           <-- Prover Schnorr (TS), identik byte-per-byte dengan verifier on-chain
 │   ├── hpke.ts               <-- HPKE RFC 9180 (X25519/HKDF-SHA256/ChaCha20-Poly1305)
 │   ├── shamir.ts             <-- Wrapper Shamir GF(2^8) (library teraudit)
-│   └── kit.ts                <-- Capsule kit: DEK + Shamir + HPKE ke inbox heir/guardian, release, recovery
+│   ├── kit.ts                <-- Capsule kit: DEK + Shamir + HPKE ke inbox heir/guardian, release, recovery
+│   └── client.ts             <-- Client program ringan (instruksi, decoder, discovery), cocok byte-per-byte dgn Anchor
+├── app/                      <-- Frontend demo Vite + React + Tailwind v4 + wallet adapter (import @sdk/*)
+│   ├── src/pages/            <-- Home, Owner (create + dashboard), Heir, Guardian, Capsule (public view)
+│   ├── scripts/localnet.mjs  <-- `npm run localnet`: validator + program + dev server
+│   └── e2e/demo-flow.mjs     <-- `npm run e2e`: seluruh cerita demo di Chrome + cek privasi on-chain
 └── tests/
     ├── sikrit.ts             <-- Test lifecycle kapsul di LiteSVM (time-travel)
     └── sdk.ts                <-- Test SDK (vector RFC 9180, FIPS-197, serangan pada kit)
@@ -64,12 +69,13 @@ SIKRIT/
 - Format transkrip Fiat–Shamir dikunci oleh known-answer vector di `tests/sikrit.ts` dan unit test Rust — ubah keduanya bersamaan.
 - Format kit (domain `SIKRIT:*:v1`, derivasi inbox key, hash share) dikunci vector di `tests/sdk.ts`; ubah = naikkan versi kit.
 - Kustodi share: share 0 → heir, share 1+g → guardian g, k − 1 = kuorum guardian. Guardian hanya release setelah `Claimed` ke inbox yang disertifikasi wallet `heir` on-chain (lihat SIK-11/12).
+- App: `cd app && npm run localnet` lalu `npm run e2e` (butuh Chrome di `CHROME_PATH`, default `/usr/bin/google-chrome`; ~2,5 menit karena timer minimum program 60 s). Komponen per-kapsul di halaman Guardian/Heir WAJIB di-key per actor (beberapa guardian berbagi kapsul — state bocor antar persona pernah jadi bug).
 
 ---
 
 ## ⚡ Next Priorities for Claude Code
 1. ~~Buat dan lengkapi `programs/sikrit/src/lib.rs` sesuai spesifikasi~~ ✅ (lihat `docs/SECURITY-REVIEW.md`)
 2. ~~Pastikan logika verifikasi ZK Schnorr proof bekerja di Rust~~ ✅ (syscall curve25519, ~41k CU)
-3. ~~Siapkan unit tests~~ ✅ (35 test LiteSVM + 24 test SDK + 10 unit test Rust)
-4. Inisialisasi frontend dashboard untuk demo flow — pakai `sdk/liveness.ts`; heartbeat dikirim fee payer burner/relayer, bukan wallet pemilik.
+3. ~~Siapkan unit tests~~ ✅ (62 test TS: LiteSVM + SDK + client; 10 unit test Rust; E2E browser)
+4. ~~Inisialisasi frontend dashboard untuk demo flow~~ ✅ (`app/`, E2E Chrome hijau; heartbeat dikirim relayer, bukan wallet pemilik)
 5. ~~M2: enkripsi share + custody share lewat guardian (SIK-11)~~ ✅ (`sdk/kit.ts`); berikutnya deploy devnet.

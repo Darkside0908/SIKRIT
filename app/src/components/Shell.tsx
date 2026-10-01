@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { CLUSTER, DEMO_ENABLED, RPC_URL } from "../config";
 import { Persona, Role, relayerKeypair, resetDemo } from "../lib/actors";
-import { balanceSol, ensureFunded } from "../lib/chain";
+import { RELAYER_EVENT, balanceSol, ensureFunded } from "../lib/chain";
 import { short } from "../lib/format";
 import { useActor } from "../lib/identity";
 import { href, Route } from "../lib/router";
@@ -108,9 +108,11 @@ function RelayerBadge() {
     const load = () => balanceSol(relayer).then((b) => live && setBalance(b)).catch(() => live && setBalance(undefined));
     void load();
     const id = setInterval(load, 8000);
+    window.addEventListener(RELAYER_EVENT, load);
     return () => {
       live = false;
       clearInterval(id);
+      window.removeEventListener(RELAYER_EVENT, load);
     };
   }, [relayer]);
 

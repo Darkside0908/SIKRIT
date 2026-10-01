@@ -2,14 +2,15 @@ import { CapsuleAccount, findCapsulesByGuardian, guardianConfirmIx, guardianVeto
 import * as kit from "@sdk/kit";
 import { bytesToHex } from "@noble/hashes/utils";
 import { PublicKey } from "@solana/web3.js";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { CapsuleVitals } from "../components/CapsuleVitals";
 import { InboxCard } from "../components/InboxCard";
+import { KitImport } from "../components/KitImport";
 import { ActingAs } from "../components/Shell";
 import { ActionButton, Copyable, Heading, Notice, TxLink } from "../components/ui";
 import { Actor, relayerKeypair } from "../lib/actors";
-import { chainState, useInbox, who } from "../lib/capsule";
+import { chainState, useInbox, useVerifiedKit, who } from "../lib/capsule";
 import { connection, sendWithRelayer } from "../lib/chain";
 import { useAction, useCapsule, useChainNow, usePolling } from "../lib/hooks";
 import { useActor } from "../lib/identity";
@@ -48,8 +49,9 @@ export function GuardianPage() {
               <p className="mt-2 text-sm text-bone-400">When an owner lists your wallet as a guardian, the capsule appears here.</p>
             </div>
           )}
+          {/* Keyed by guardian too: several guardians share a capsule, and none may inherit another's UI state. */}
           {list.value?.map(({ address, capsule }) => (
-            <GuardianCapsule key={address.toBase58()} address={address} initial={capsule} actor={actor!} inbox={inbox} onChange={list.refresh} />
+            <GuardianCapsule key={`${key}:${address.toBase58()}`} address={address} initial={capsule} actor={actor!} inbox={inbox} onChange={list.refresh} />
           ))}
         </div>
       </div>
@@ -126,27 +128,16 @@ function GuardianCapsule({
         )}
         {lastTx && <TxLink signature={lastTx} />}
       </CapsuleVitals>
-      <Release address={address} capsule={capsule} inbox={inbox} />
+      <Release address={address} capsule={capsule} inbox={inbox} guardian={actor.publicKey} />
     </article>
   );
 }
 
-function Release({ address, capsule, inbox }: { address: PublicKey; capsule: CapsuleAccount; inbox: Inbox }) {
+function Release({ address, capsule, inbox, guardian }: { address: PublicKey; capsule: CapsuleAccount; inbox: Inbox; guardian: PublicKey }) {
   const mailbox = useMailbox();
   const action = useAction();
-  const [token, setToken] = useState<string>();
-  const kitText = mailbox.kits[address.toBase58()];
-
-  const checked = useMemo(() => {
-    if (!kitText) return {};
-    try {
-      const parsed = kit.decodeKit(kitText);
-      kit.verifyKit(parsed, chainState(capsule));
-      return { kit: parsed };
-    } catch (e) {
-      return { error: (e as Error).message.replace(/^kit: /, "") };
-    }
-  }, [kitText, capsule]);
+  const { kitText, checked, importKit } = useVerifiedKit(address, capsule);
+  const token = mailbox.sent[`${address.toBase58()}:${guardian.toBase58()}`];
 
   const release = () =>
     action.run("Releasing", async () => {
@@ -157,16 +148,15 @@ function Release({ address, capsule, inbox }: { address: PublicKey; capsule: Cap
       const share = kit.openShare(checked.kit, index, inbox.keyPair.secretKey);
       // Refuses unless the chain says Claimed, and seals only to the inbox the on-chain heir certified.
       const sealed = kit.releaseShare(checked.kit, share, chainState(capsule));
-      const encoded = encodeRelease(address.toBase58(), bytesToHex(sealed));
-      postRelease(address.toBase58(), encoded);
-      setToken(encoded);
+      postRelease(address.toBase58(), guardian.toBase58(), encodeRelease(address.toBase58(), bytesToHex(sealed)));
     });
 
   return (
     <section className="card space-y-4 p-6">
       <div className="eyebrow">Your share</div>
+      {(!kitText || checked.error) && <KitImport onImport={importKit} rejected={Boolean(checked.error)} />}
       {!kitText ? (
-        <p className="text-sm text-bone-400">No kit for this capsule in this browser. The owner sends it to every holder when sealing.</p>
+        <p className="text-sm text-bone-400">The owner sends the kit file to every holder when sealing.</p>
       ) : checked.error ? (
         <Notice tone="error">Kit rejected: {checked.error}</Notice>
       ) : capsule.status !== "claimed" ? (

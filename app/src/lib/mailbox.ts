@@ -8,12 +8,15 @@ import { useSyncExternalStore } from "react";
 interface Mailbox {
   invites: Record<string, string>;
   kits: Record<string, string>;
+  /** Releases waiting for the heir, per capsule. */
   releases: Record<string, string[]>;
+  /** The release each guardian sent, keyed `${capsule}:${guardian wallet}` (their outbox). */
+  sent: Record<string, string>;
 }
 
 const KEY = "sikrit:mailbox:v1";
 const EVENT = "sikrit:mailbox";
-const empty = (): Mailbox => ({ invites: {}, kits: {}, releases: {} });
+const empty = (): Mailbox => ({ invites: {}, kits: {}, releases: {}, sent: {} });
 
 let cachedRaw: string | null = null;
 let cached: Mailbox = empty();
@@ -49,10 +52,11 @@ export const postInvite = (wallet: string, invite: string) => write((box) => voi
 
 export const postKit = (capsule: string, kit: string) => write((box) => void (box.kits[capsule] = kit));
 
-export const postRelease = (capsule: string, release: string) =>
+export const postRelease = (capsule: string, guardian: string, release: string) =>
   write((box) => {
     const list = box.releases[capsule] ?? [];
     if (!list.includes(release)) box.releases[capsule] = [...list, release];
+    box.sent[`${capsule}:${guardian}`] = release;
   });
 
 // Release tokens: "sikrit-release:v1:<capsule>:<hex sealed box>".

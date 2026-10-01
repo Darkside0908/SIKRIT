@@ -36,8 +36,9 @@ SIKRIT adalah protokol warisan digital pertama di mana **liveness si pemilik tid
 - [x] Schnorr PoK: verifier on-chain via syscall curve25519 + prover TypeScript (`sdk/liveness.ts`)
 - [x] Test suite lifecycle lengkap (35 test LiteSVM + 10 unit test Rust)
 - [x] SDK kriptografi client: HPKE RFC 9180 (X25519 + ChaCha20-Poly1305), Shamir GF(2^8) teraudit, capsule kit dengan inbox certificate + release share oleh guardian setelah `Claimed` (23 test, known-answer vector RFC 9180 & FIPS-197)
-- [ ] Frontend (setup → heartbeat → claim)
-- [ ] Deploy devnet + E2E
+- [x] Frontend demo (`app/`, Vite + React + wallet adapter): Create Capsule → Owner Dashboard (ZK heartbeat + inspector "what the chain sees") → Heir Claim Portal → Guardian console, mode demo interval 1 menit
+- [x] E2E browser test (`npm run e2e` di `app/`): seluruh cerita warisan di Chrome melawan validator lokal + cek on-chain bahwa wallet pemilik tidak muncul di transaksi kapsul mana pun
+- [ ] Deploy devnet (menunggu SOL devnet, faucet publik rate-limited)
 - [ ] Pitch deck + video
 
 **Deadline submit:** 12 Oktober 2026
@@ -56,6 +57,9 @@ sdk/shamir.ts                Shamir's Secret Sharing GF(2^8) (wrapper library te
 sdk/kit.ts                   Capsule kit: enkripsi rahasia, split kunci, seal share ke heir/guardian, release, recovery
 tests/sikrit.ts              Test lifecycle kapsul di LiteSVM (time-travel clock)
 tests/sdk.ts                 Test SDK: known-answer vector RFC 9180 & FIPS-197, serangan pada kit
+sdk/client.ts                Client program ringan (instruksi, decoder akun, discovery) — diverifikasi byte-per-byte vs Anchor
+app/                         Frontend demo (Vite + React + Tailwind + wallet adapter), memakai sdk/* langsung
+app/e2e/demo-flow.mjs        E2E Chrome: owner → heartbeat → klaim → guardian 2-of-3 → heir memulihkan seed
 docs/                        Pitch, spesifikasi teknis, security review
 ```
 
@@ -79,6 +83,20 @@ npm run test:rust     # unit test verifier Schnorr (host)
 npm test              # lifecycle test di LiteSVM + test SDK
 npm run typecheck
 ```
+
+### Demo app (localnet)
+
+```bash
+npm run build                 # sekali: binary program untuk validator lokal
+cd app && npm install
+npm run localnet              # solana-test-validator + program SIKRIT + app di http://localhost:5173
+npm run e2e                   # (opsional) jalankan seluruh cerita demo otomatis di Chrome, ~2,5 menit
+```
+
+Mode demo memakai lima persona (Pak Arif, Sari, Budi, Dewi, Rizal) dengan keypair di localStorage browser dan
+relayer sebagai fee payer — semua peran bisa dimainkan di satu tab. Wallet asli (Phantom/Solflare/Backpack via
+Wallet Standard) juga bisa dipakai untuk setiap peran. Build produksi (`npm run build` di `app/`) default ke devnet
+dan memasang Content-Security-Policy ketat.
 
 Catatan build:
 - Pesan `Error: Function ... NafLookupTable8 ... Stack offset ... exceeded` saat `anchor build` **wajar dan tidak berbahaya**: itu kode curve25519-dalek yang tidak dipakai (operasi titik lewat syscall) dan dieliminasi dari binary final.

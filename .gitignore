@@ -12,3 +12,5 @@ dist/
 # Secret keys: program-ID keypair (target/deploy/sikrit-keypair.json) & any backups
 *keypair*.json
 .keys/
+# E2E run artifacts (curated screenshots live in docs/screenshots/)
+app/e2e/out/

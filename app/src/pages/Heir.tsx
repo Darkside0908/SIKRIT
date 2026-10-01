@@ -2,15 +2,16 @@ import { CapsuleAccount, claimIx, findCapsulesByHeir, timeline, triggerClaimIx }
 import * as kit from "@sdk/kit";
 import { hexToBytes } from "@noble/hashes/utils";
 import { PublicKey } from "@solana/web3.js";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { CapsuleVitals } from "../components/CapsuleVitals";
 import { InboxCard } from "../components/InboxCard";
+import { KitImport } from "../components/KitImport";
 import { ActingAs } from "../components/Shell";
 import { ActionButton, Heading, Notice, TxLink } from "../components/ui";
 import { Seal } from "../components/visuals";
 import { Actor, relayerKeypair } from "../lib/actors";
-import { chainState, useInbox, who } from "../lib/capsule";
+import { useInbox, useVerifiedKit, who } from "../lib/capsule";
 import { connection, sendWithRelayer } from "../lib/chain";
 import { useAction, useCapsule, useChainNow, usePolling } from "../lib/hooks";
 import { useActor } from "../lib/identity";
@@ -50,7 +51,7 @@ export function HeirPage() {
             </div>
           )}
           {list.value?.map(({ address, capsule }) => (
-            <HeirCapsule key={address.toBase58()} address={address} initial={capsule} actor={actor!} inbox={inbox} onChange={list.refresh} />
+            <HeirCapsule key={`${key}:${address.toBase58()}`} address={address} initial={capsule} actor={actor!} inbox={inbox} onChange={list.refresh} />
           ))}
         </div>
       </div>
@@ -128,23 +129,11 @@ function HeirCapsule({
 function Recovery({ address, capsule, inbox }: { address: PublicKey; capsule: CapsuleAccount; inbox: Inbox }) {
   const mailbox = useMailbox();
   const action = useAction();
-  const [importedKit, setImportedKit] = useState<string>();
+  const { kitText, checked, importKit } = useVerifiedKit(address, capsule);
   const [pasted, setPasted] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
   const [revealed, setRevealed] = useState<string>();
   const addressText = address.toBase58();
-  const kitText = importedKit ?? mailbox.kits[addressText];
-
-  const checked = useMemo(() => {
-    if (!kitText) return {};
-    try {
-      const parsed = kit.decodeKit(kitText);
-      kit.verifyKit(parsed, chainState(capsule));
-      return { kit: parsed };
-    } catch (e) {
-      return { error: (e as Error).message.replace(/^kit: /, "") };
-    }
-  }, [kitText, capsule]);
 
   const own = useMemo(() => {
     if (!checked.kit || !inbox) return undefined;
@@ -208,9 +197,7 @@ function Recovery({ address, capsule, inbox }: { address: PublicKey; capsule: Ca
 
       {action.error && <Notice tone="error" onClose={action.clearError}>{action.error}</Notice>}
 
-      {!kitText && (
-        <KitImport onImport={setImportedKit} />
-      )}
+      {(!kitText || checked.error) && <KitImport onImport={importKit} rejected={Boolean(checked.error)} />}
       {checked.error && <Notice tone="error">Kit rejected: {checked.error}</Notice>}
       {checked.kit && (
         <Notice tone="success">
@@ -254,28 +241,6 @@ function Recovery({ address, capsule, inbox }: { address: PublicKey; capsule: Ca
         <Revealed text={revealed} from={who(capsule.heir)} onClear={() => setRevealed(undefined)} />
       )}
     </section>
-  );
-}
-
-function KitImport({ onImport }: { onImport: (text: string) => void }) {
-  const fileRef = useRef<HTMLInputElement>(null);
-  return (
-    <div className="flex flex-wrap items-center gap-3 rounded-lg border border-dashed border-ink-600 p-4 text-sm text-bone-400">
-      <span>No kit for this capsule in this browser.</span>
-      <button className="btn-ghost py-1.5 text-xs" onClick={() => fileRef.current?.click()}>
-        Import kit file
-      </button>
-      <input
-        ref={fileRef}
-        type="file"
-        accept="application/json,.json"
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) void file.text().then(onImport);
-        }}
-      />
-    </div>
   );
 }
 

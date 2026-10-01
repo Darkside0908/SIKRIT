@@ -49,7 +49,8 @@ export function CapsuleVitals({ address, capsule, children }: { address: PublicK
           )}
           <div className="text-xs text-bone-500">
             interval {duration(capsule.heartbeatInterval)} · grace {duration(capsule.gracePeriod)} · guardians{" "}
-            {t?.approvalCount ?? 0}/{capsule.guardianThreshold} confirmed · {capsule.heartbeatNonce.toString()} heartbeats
+            {t?.approvalCount ?? 0}/{capsule.guardianThreshold} confirmed · {capsule.heartbeatNonce.toString()} heartbeat
+            {capsule.heartbeatNonce === 1n ? "" : "s"}
           </div>
         </div>
         {children && <div className="flex flex-col items-stretch gap-2 sm:items-end">{children}</div>}

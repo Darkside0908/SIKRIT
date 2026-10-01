@@ -12,6 +12,9 @@ import { RPC_URL } from "../config";
 
 export const connection = new Connection(RPC_URL, { commitment: "confirmed" });
 
+/** Fired whenever the relayer's balance changed (fees paid, faucet top-up). */
+export const RELAYER_EVENT = "sikrit:relayer";
+
 /** The cluster's own clock (Clock sysvar `unix_timestamp`), which is what the program checks. */
 export async function readChainTime(): Promise<bigint> {
   const info = await connection.getAccountInfo(SYSVAR_CLOCK_PUBKEY, "confirmed");
@@ -48,6 +51,7 @@ export async function sendWithRelayer(
   const signature = await connection.sendRawTransaction(transaction.serialize(), { preflightCommitment: "confirmed" });
   const { value } = await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, "confirmed");
   if (value.err) throw new Error(`Transaction failed: ${JSON.stringify(value.err)}`);
+  window.dispatchEvent(new Event(RELAYER_EVENT));
   return { signature, transaction };
 }
 
@@ -59,8 +63,16 @@ export async function balanceSol(address: PublicKey): Promise<number> {
 export async function ensureFunded(address: PublicKey, minimumSol = 0.05, topUpSol = 1): Promise<number> {
   const balance = await balanceSol(address);
   if (balance >= minimumSol) return balance;
-  const signature = await connection.requestAirdrop(address, Math.round(topUpSol * LAMPORTS_PER_SOL));
-  const latest = await connection.getLatestBlockhash("confirmed");
-  await connection.confirmTransaction({ signature, ...latest }, "confirmed");
+  try {
+    const signature = await connection.requestAirdrop(address, Math.round(topUpSol * LAMPORTS_PER_SOL));
+    const latest = await connection.getLatestBlockhash("confirmed");
+    await connection.confirmTransaction({ signature, ...latest }, "confirmed");
+  } catch {
+    throw new Error(
+      `The faucet refused to top up the relayer (public faucets are rate-limited). Send at least ${minimumSol} SOL ` +
+        `of test funds to ${address.toBase58()} — e.g. from faucet.solana.com — and try again.`,
+    );
+  }
+  window.dispatchEvent(new Event(RELAYER_EVENT));
   return balanceSol(address);
 }

@@ -58,9 +58,15 @@ export function relayerKeypair(): Keypair {
   return loadKeypair(RELAYER_KEY, "relayer");
 }
 
+// One stable object per persona, so hooks keyed on the actor do not re-run on every render.
+// (A demo reset reloads the page, which clears this cache along with the keys.)
+const personaActors = new Map<string, Actor>();
+
 export function personaActor(persona: Persona): Actor {
+  const cached = personaActors.get(persona.id);
+  if (cached) return cached;
   const keypair = personaKeypair(persona.id);
-  return {
+  const actor: Actor = {
     kind: "persona",
     id: persona.id,
     name: persona.name,
@@ -71,6 +77,8 @@ export function personaActor(persona: Persona): Actor {
       return tx;
     },
   };
+  personaActors.set(persona.id, actor);
+  return actor;
 }
 
 export function personaFor(address: PublicKey): Persona | undefined {

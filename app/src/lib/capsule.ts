@@ -2,11 +2,11 @@ import type { CapsuleAccount } from "@sdk/client";
 import * as kit from "@sdk/kit";
 import type { KeyPair } from "@sdk/hpke";
 import { PublicKey } from "@solana/web3.js";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Actor, personaFor } from "./actors";
 import { short } from "./format";
-import { postInvite } from "./mailbox";
+import { postInvite, postKit, useMailbox } from "./mailbox";
 
 /** The capsule as a kit consumer checks it (sdk/kit.ts `CapsuleState`). */
 export const chainState = (capsule: CapsuleAccount): kit.CapsuleState => ({
@@ -16,6 +16,43 @@ export const chainState = (capsule: CapsuleAccount): kit.CapsuleState => ({
   shareHashes: capsule.shareHashes,
   claimed: capsule.status === "claimed",
 });
+
+/**
+ * The capsule's kit — from this browser's mailbox or an imported file — checked against the
+ * chain. Only a kit that verifies is kept in the mailbox, so a wrong file cannot shadow a good one.
+ */
+export function useVerifiedKit(address: PublicKey, capsule: CapsuleAccount) {
+  const mailbox = useMailbox();
+  const [imported, setImported] = useState<string>();
+  const addressText = address.toBase58();
+  const kitText = imported ?? mailbox.kits[addressText];
+
+  const checked = useMemo((): { kit?: kit.CapsuleKit; error?: string } => {
+    if (!kitText) return {};
+    try {
+      const parsed = kit.decodeKit(kitText);
+      kit.verifyKit(parsed, chainState(capsule));
+      return { kit: parsed };
+    } catch (e) {
+      return { error: (e as Error).message.replace(/^kit: /, "") };
+    }
+  }, [kitText, capsule]);
+
+  const importKit = useCallback(
+    (text: string) => {
+      setImported(text);
+      try {
+        kit.verifyKit(kit.decodeKit(text), chainState(capsule));
+        postKit(addressText, text);
+      } catch {
+        /* surfaced through `checked.error` */
+      }
+    },
+    [addressText, capsule],
+  );
+
+  return { kitText, checked, importKit };
+}
 
 /** "Sari (7xK…p2)" for demo personas, the short address otherwise. */
 export function who(address: PublicKey | Uint8Array): string {
