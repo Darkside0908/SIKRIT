@@ -7,7 +7,8 @@
 **A dead man's switch on Solana where proving you're alive doesn't reveal who you are.**
 
 Your heir inherits your seed phrase only after you fall silent, and only with your guardians' consent. While you're
-alive, your check-ins are zero-knowledge proofs that never touch your wallet.
+alive, your check-ins are zero-knowledge proofs that never touch your wallet, and the chain never learns who your
+family is.
 
 <p>
   <b>Colosseum Crypto World's Fair 2026</b> · Solana track · University Award · Public Goods Award<br />
@@ -43,8 +44,11 @@ a typical check-in                        a SIKRIT heartbeat
 
 The owner proves knowledge of a dedicated **liveness key** `x` with a Schnorr zero-knowledge proof. The capsule's
 address is derived from `P = x·G`, not from a wallet, and the instruction needs no signer, so any relayer can submit
-it. Our end-to-end test plays a full inheritance in Chrome, on a local validator and on Solana devnet, then re-reads
-every capsule transaction: **the owner's wallet appears in 0 of 6.** Check one devnet run yourself: capsule
+it. The heir and the guardians are on-chain only as **salted commitments**, so nobody can find the capsule through
+the owner's family either: each member shows up only in the transaction where they act. Our end-to-end test plays a
+full inheritance in Chrome, on a local validator and on Solana devnet, then re-reads every capsule transaction:
+**the owner's wallet appears in 0 of 6**, the heir only in her claim, each confirming guardian only in their own
+confirmation, and the guardian who never acted in none. Check one devnet run yourself: capsule
 [`5RR3sG…xjX9i`](https://explorer.solana.com/address/5RR3sGRBZwdXAV6SMLFUzzGksMzuigmaLMEMNVCxjX9i?cluster=devnet)
 went from creation to a completed claim, and its owner's wallet
 [`BvmZmR…TBSW`](https://explorer.solana.com/address/BvmZmRgnuy6y8tWdTbRPdPDC5jsFfhEm3cMsEnkxTBSW?cluster=devnet)
@@ -56,14 +60,17 @@ went from creation to a completed claim, and its owner's wallet
 
 1. **Seal.** The secret is encrypted in the browser (XChaCha20-Poly1305) under a random key. That key is split with
    Shamir's scheme: share 0 for the heir, one share per guardian, each sealed with **HPKE (RFC 9180)** to an inbox
-   key that its holder's wallet signed. Only a hash of each share goes on-chain, signed into the capsule by the
-   owner's proof-of-possession.
-2. **Prove you're alive.** `heartbeat(R, s)` carries a Schnorr proof over the transcript
-   `SHA-512("SIKRIT:liveness:v1" ‖ program ‖ capsule ‖ P ‖ R ‖ nonce)`. The program verifies `s·G − e·P = R` with
-   Solana's curve25519 syscalls (**41,012 CU**) and bumps the nonce, so every proof works exactly once.
+   key that its holder's wallet signed. On-chain go only a hash of each share and, per member, a commitment
+   `SHA-256("SIKRIT:member:v1" ‖ P ‖ role ‖ wallet ‖ salt)` with a random salt that travels in the kit, all signed
+   into the capsule by the owner's proof-of-possession.
+2. **Prove you're alive.** `heartbeat(R, s, expiry)` carries a Schnorr proof over the transcript
+   `SHA-512("SIKRIT:liveness:v2" ‖ program ‖ capsule ‖ P ‖ R ‖ nonce ‖ expiry)`. The program verifies `s·G − e·P = R`
+   with Solana's curve25519 syscalls (**~41k CU**) and bumps the nonce, so every proof works exactly once, and only
+   for minutes: a relayer that holds one back cannot use it later.
 3. **Release on silence.** After a missed interval anyone may open a claim. A heartbeat cancels it; each guardian has
-   one veto per heartbeat. After the grace period and a guardian quorum, the heir claims. Only then do guardians
-   re-seal their shares to the inbox the on-chain heir certified, and the secret reassembles in the heir's browser.
+   one veto per heartbeat. Guardians confirm by opening their commitment with the salt from their kit. After the
+   grace period and a guardian quorum, the heir claims the same way. Only then do guardians re-seal their shares to
+   the inbox the committed heir certified, and the secret reassembles in the heir's browser.
 
 ```mermaid
 stateDiagram-v2
@@ -72,7 +79,7 @@ stateDiagram-v2
     Active --> ClaimPending: trigger_claim (anyone, after the interval)
     ClaimPending --> Active: heartbeat, or guardian_veto (during grace)
     ClaimPending --> ClaimPending: guardian_confirm
-    ClaimPending --> Claimed: claim (heir, after grace + quorum)
+    ClaimPending --> Claimed: claim (heir opens its commitment, after grace + quorum)
     Claimed --> [*]: guardians release shares off-chain → heir recovers
 ```
 
@@ -90,11 +97,12 @@ stateDiagram-v2
 
 | | |
 |---|---|
-| Heartbeat verification | **41,012 CU** (curve25519 syscalls; a pure-Rust verifier exceeded 1.4 M CU) |
-| `create_capsule` / other instructions | ~69k CU / ~7k CU |
+| Heartbeat verification | **~41.4k CU** (curve25519 syscalls; a pure-Rust verifier exceeded 1.4 M CU) |
+| `create_capsule` / other instructions | ~70k CU / ~7.5–8.3k CU |
 | Cost of a heartbeat | 5,000 lamports. 30 years of weekly heartbeats ≈ **0.0078 SOL**. No token |
 | Owner wallets in capsule transactions | **0 of 6**, checked on-chain by the E2E test |
-| Tests | 68 TypeScript (LiteSVM lifecycle + SDK + client + relayer) · 10 Rust unit · 12-step browser E2E on localnet and devnet |
+| Family wallets on-chain before they act | **0**: heir only in her claim, guardians only in their own confirmation |
+| Tests | 73 TypeScript (LiteSVM lifecycle + SDK + client + relayer) · 12 Rust unit · 12-step browser E2E on localnet and devnet |
 
 ## Try it locally (~5 minutes)
 
@@ -116,7 +124,7 @@ it deploys as a serverless function (set `RELAYER_SECRET_KEY` to a funded devnet
 instructions, as fee payer and as a new capsule's rent payer, so its key can't be used to move its SOL anywhere else.
 
 ```bash
-npm test                # 68 tests: lifecycle on the real SBF binary with a time-travelling clock, SDK vectors, client, relayer
+npm test                # 73 tests: lifecycle on the real SBF binary with a time-travelling clock, SDK vectors, client, relayer
 npm run test:rust       # verifier unit tests, incl. a known-answer vector shared with the TypeScript prover
 npm run typecheck
 ```
@@ -141,14 +149,16 @@ docs/                        pitch, research, technical spec, security review, d
 
 SIKRIT is a research prototype and **has not been audited externally**. It ships with a self-audit,
 [docs/SECURITY-REVIEW.en.md](docs/SECURITY-REVIEW.en.md) (full Indonesian edition:
-[docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md)). It covers the program, SDK, app and relayer service, with 18
+[docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md)). It covers the program, SDK, app and relayer service, with 20
 findings, all High/Critical fixed and tested: proof replay, guardian double-voting, unbounded veto (DoS), an on-chain
 verifier that could not run (moved to syscalls), encryption keys without authentication (now wallet-signed inbox
-certificates), unauthenticated Shamir reconstruction, and more.
+certificates), unauthenticated Shamir reconstruction, a public family roster that led to the owner (now salted
+commitments), heartbeat proofs that never expired, and more.
 
 What is public by design, and stated in the pitch:
 
-- **When** heartbeats happen and **who** the heir and guardians are (R1, R3). What stays hidden is **who the owner is**.
+- **When** heartbeats happen (R1), and each family member at the moment they act: a guardian confirming or vetoing,
+  the heir claiming (R3). What stays hidden is **who the owner is**, and who stands to inherit before they claim.
 - Enough guardians colluding without the heir can open a kit early, a property of any threshold scheme and also the
   heir's recovery path (R15). The create wizard warns about it.
 - Guardians releasing only after `Claimed` is enforced by the app and the guardian's honesty, not by cryptography
@@ -160,12 +170,14 @@ What is public by design, and stated in the pitch:
 - [x] Client SDK (Shamir + HPKE + kit) with test vectors
 - [x] Demo app (create → heartbeat → claim → guardian release → recovery), browser E2E
 - [x] Static hosting ready (GitHub Pages workflow, `app/vercel.json`)
+- [x] Protocol v2: sealed heir/guardian roster, heartbeat proofs that expire within the hour
 - [x] Program live on devnet: [`FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F`](https://explorer.solana.com/address/FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F?cluster=devnet)
   (deployed bytes identical to `anchor build`; the full demo story passes against it with `cd app && npm run e2e:devnet`)
 - [ ] Live demo URL ⟨…⟩
 
 Roadmap: watcher alerts when a claim opens, origin-bound key derivation, Ledger support, external audit, then mainnet.
-Later: heartbeats inside an anonymity set, hashed heir/guardian commitments, a post-quantum hybrid KEM.
+Later: heartbeats inside an anonymity set, a "blind" kit that hides the roster from a leaked file, a post-quantum
+hybrid KEM.
 
 ## Team
 
