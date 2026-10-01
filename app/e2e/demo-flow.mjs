@@ -11,10 +11,14 @@
  *   CHROME_PATH  Chrome/Chromium binary (default /usr/bin/google-chrome)
  *   HEADED=1     watch it run
  *   SHOTS_DIR    also save curated element screenshots there (docs/screenshots)
+ *   RECORD_DIR   also record the run as demo-flow.mp4 there (B-roll for the demo video; the two
+ *                60-second waits are cut out). Needs ffmpeg on PATH (or FFMPEG=/path/to/ffmpeg)
+ *   SLOWMO=ms    pause between browser actions (makes a recording watchable)
  *
  * Needs capsule timers of 60 s (the localnet defaults in the create form), so a run takes ~3 min.
  */
-import { mkdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
 
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import { chromium } from "playwright-core";
@@ -24,16 +28,60 @@ const RPC = process.env.RPC_URL ?? "http://127.0.0.1:8899";
 const CHROME = process.env.CHROME_PATH ?? "/usr/bin/google-chrome";
 const OUT = new URL("./out/", import.meta.url).pathname;
 const SHOTS = process.env.SHOTS_DIR;
+const RECORD = process.env.RECORD_DIR;
 const SAMPLE_SEED = "abandon ability able about above absent absorb abstract absurd abuse access accident";
 const MINUTE = 60_000;
 
 mkdirSync(OUT, { recursive: true });
 if (SHOTS) mkdirSync(SHOTS, { recursive: true });
-const browser = await chromium.launch({ executablePath: CHROME, headless: !process.env.HEADED });
-const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: SHOTS ? 2 : 1 });
+const browser = await chromium.launch({ executablePath: CHROME, headless: !process.env.HEADED, slowMo: Number(process.env.SLOWMO ?? 0) });
+const viewport = { width: 1440, height: 900 };
+const context = await browser.newContext({ viewport, deviceScaleFactor: SHOTS ? 2 : 1 });
+const page = await context.newPage();
+const recorder = RECORD ? await record(page, RECORD) : undefined;
 const problems = [];
 page.on("pageerror", (e) => problems.push(`pageerror: ${e.message}`));
 page.on("console", (m) => m.type() === "error" && problems.push(`console.error: ${m.text()}`));
+
+/**
+ * Screencast over CDP, assembled with ffmpeg (Playwright's own recorder needs a separate
+ * ffmpeg download). `pause()` drops frames, so long waits become jump cuts.
+ */
+async function record(target, dir) {
+  const cdp = await target.context().newCDPSession(target);
+  const frames = [];
+  let paused = false;
+  cdp.on("Page.screencastFrame", ({ data, metadata, sessionId }) => {
+    if (!paused) frames.push({ data, t: metadata.timestamp });
+    cdp.send("Page.screencastFrameAck", { sessionId }).catch(() => {});
+  });
+  await cdp.send("Page.startScreencast", { format: "jpeg", quality: 90, maxWidth: viewport.width, maxHeight: viewport.height });
+  let gapFrom;
+  return {
+    pause: () => ((paused = true), (gapFrom = frames.length)),
+    // Frames after a pause continue right after the last kept frame.
+    resume: () => ((paused = false), frames.length > gapFrom && (frames[gapFrom].cut = true)),
+    async save() {
+      await cdp.send("Page.stopScreencast").catch(() => {});
+      mkdirSync(dir, { recursive: true });
+      const lines = [];
+      frames.forEach((frame, i) => {
+        const name = `frame-${String(i).padStart(6, "0")}.jpg`;
+        writeFileSync(`${dir}/${name}`, Buffer.from(frame.data, "base64"));
+        const next = frames[i + 1];
+        const duration = !next ? 1 : next.cut ? 0.6 : Math.min(next.t - frame.t, 2);
+        lines.push(`file '${name}'`, `duration ${Math.max(duration, 0.001).toFixed(3)}`);
+      });
+      lines.push(`file 'frame-${String(frames.length - 1).padStart(6, "0")}.jpg'`);
+      writeFileSync(`${dir}/frames.txt`, lines.join("\n"));
+      execFileSync(process.env.FFMPEG ?? "ffmpeg", [
+        "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", "frames.txt",
+        "-vf", "fps=30,format=yuv420p", "-c:v", "libx264", "-crf", "18", "demo-flow.mp4",
+      ], { cwd: dir });
+      return `${dir}/demo-flow.mp4`;
+    },
+  };
+}
 
 const started = Date.now();
 async function step(name, run) {
@@ -51,6 +99,12 @@ async function curate(name, target) {
   await (target ? target.screenshot({ path }) : page.screenshot({ path }));
 }
 const section = (text) => page.locator("section", { hasText: text }).last();
+/** Holds a key screen in recordings (no-op otherwise), optionally scrolled to `target`. */
+async function dwell(ms, target) {
+  if (!RECORD) return;
+  if (target) await target.evaluate((el) => el.scrollIntoView({ behavior: "smooth", block: "center" }));
+  await page.waitForTimeout(ms);
+}
 const go = (hash) => page.goto(`${BASE}/#/${hash}`);
 const button = (name) => page.getByRole("button", { name });
 const actAs = (name) => button(new RegExp(`${name}$`)).click();
@@ -71,12 +125,14 @@ let owner;
 
 try {
   await step("owner derives the liveness key from a wallet signature", async () => {
-    if (SHOTS) {
+    if (SHOTS || RECORD) {
       await go("");
       await page.getByText("Don't take your keys").waitFor();
       await curate("home");
+      await dwell(3500);
     }
     await go("owner");
+    await dwell(1500);
     await button("Derive my liveness key").click();
     await button("Invite the demo family").waitFor();
   });
@@ -84,7 +140,9 @@ try {
   await step("heir and guardians send signed invites", async () => {
     await button("Invite the demo family").click();
     await text("✓ signed by Sari").waitFor();
+    await dwell(2500);
     await button("Use a sample seed phrase").click();
+    await dwell(2000, button("Seal the capsule"));
     await shot("01-create");
     await curate("create", page.locator("main"));
   });
@@ -93,6 +151,7 @@ try {
     await button("Seal the capsule").click();
     await button("Send ZK heartbeat").waitFor({ timeout: MINUTE });
     await text("create_capsule").waitFor();
+    await dwell(3000, section("What the chain sees"));
     await shot("02-sealed");
     const state = await page.evaluate(() => ({
       mailbox: JSON.parse(localStorage.getItem("sikrit:mailbox:v1") ?? "{}"),
@@ -110,16 +169,20 @@ try {
     await shot("03-heartbeat");
     await curate("heartbeat", page.locator("section", { has: button("Send ZK heartbeat") }));
     await curate("inspector", section("What the chain sees"));
+    await dwell(5000, section("What the chain sees"));
   });
 
   await step("owner falls silent past the interval", async () => {
+    recorder?.pause();
     await text("Overdue — anyone may open a claim now").waitFor({ timeout: 2 * MINUTE });
+    recorder?.resume();
   });
 
   await step("heir opens the claim", async () => {
     await go("heir");
     await (await enabled(button("Open the claim"), MINUTE)).click();
     await button("Claim the capsule").waitFor({ timeout: MINUTE });
+    await dwell(2500);
     await shot("04-claim-open");
   });
 
@@ -129,6 +192,7 @@ try {
       await actAs(guardian);
       await (await enabled(button("Confirm the claim"), MINUTE)).click();
       await button("Confirmed").waitFor({ timeout: MINUTE });
+      await dwell(1500);
     }
     await shot("05-confirmed");
     await curate("guardian", page.locator("article").first());
@@ -136,8 +200,13 @@ try {
 
   await step("heir claims once the grace period ends", async () => {
     await go("heir");
-    await (await enabled(button("Claim the capsule"), 2 * MINUTE)).click();
+    recorder?.pause();
+    const claim = await enabled(button("Claim the capsule"), 2 * MINUTE);
+    recorder?.resume();
+    await page.waitForTimeout(800);
+    await claim.click();
     await text("Sealed no more.").waitFor({ timeout: MINUTE });
+    await dwell(2500);
     await shot("06-claimed");
   });
 
@@ -147,6 +216,7 @@ try {
       await actAs(guardian);
       await button("Release my share to the heir").click();
       await text("Released to Sari's inbox").waitFor({ timeout: MINUTE });
+      await dwell(1500);
     }
   });
 
@@ -166,6 +236,7 @@ try {
     await page.waitForTimeout(400);
     await shot("07-recovered");
     await curate("recovered", recovery);
+    await dwell(4500);
     await page.mouse.up();
   });
 
@@ -174,6 +245,8 @@ try {
     await text("Public record").waitFor();
     await shot("08-public");
     await curate("public", page.locator("main"));
+    await dwell(2500);
+    await dwell(3000, section("Not on-chain, anywhere"));
   });
 
   await step("chain check: owner wallet absent from every capsule transaction", async () => {
@@ -197,5 +270,7 @@ try {
   if (problems.length) console.error(`browser errors:\n  ${problems.join("\n  ")}`);
   process.exitCode = 1;
 } finally {
+  if (recorder) console.log(`recording saved: ${await recorder.save()}`);
+  await context.close();
   await browser.close();
 }
