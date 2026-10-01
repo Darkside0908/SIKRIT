@@ -15,7 +15,7 @@ alive, your check-ins are zero-knowledge proofs that never touch your wallet.
   <a href="docs/deck/SIKRIT-deck.pdf">Pitch deck (PDF)</a> ·
   Pitch video ⟨link⟩ ·
   Demo video ⟨link⟩ ·
-  <a href="docs/SECURITY-REVIEW.md">Security review</a> ·
+  <a href="docs/SECURITY-REVIEW.en.md">Security review</a> ·
   <a href="docs/RESEARCH.md">Research &amp; sources</a> ·
   <a href="docs/SUBMISSION.md">Submission kit</a>
 </p>
@@ -140,10 +140,11 @@ docs/                        pitch, research, technical spec, security review, d
 ## Security
 
 SIKRIT is a research prototype and **has not been audited externally**. It ships with a self-audit,
-[docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md) (in Indonesian), covering 18 findings across the program, SDK and app, all High/Critical fixed and
-tested: proof replay, guardian double-voting, unbounded veto (DoS), an on-chain verifier that could not run (moved to
-syscalls), encryption keys without authentication (now wallet-signed inbox certificates), unauthenticated Shamir
-reconstruction, and more.
+[docs/SECURITY-REVIEW.en.md](docs/SECURITY-REVIEW.en.md) (full Indonesian edition:
+[docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md)). It covers the program, SDK, app and relayer service, with 18
+findings, all High/Critical fixed and tested: proof replay, guardian double-voting, unbounded veto (DoS), an on-chain
+verifier that could not run (moved to syscalls), encryption keys without authentication (now wallet-signed inbox
+certificates), unauthenticated Shamir reconstruction, and more.
 
 What is public by design, and stated in the pitch:
 

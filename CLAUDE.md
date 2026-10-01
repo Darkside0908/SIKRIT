@@ -38,7 +38,8 @@ SIKRIT/
 │   ├── HACKATHON-CONTEXT.md  <-- Profil juri, hadiah, kriteria penilaian
 │   ├── PITCH.md              <-- Narasi pitch, competitive table, selling point
 │   ├── TECHNICAL-SPEC.md     <-- Detail instruksi smart contract & state machine
-│   └── SECURITY-REVIEW.md    <-- Self-audit: temuan, perbaikan, protokol Fiat–Shamir, risiko residual
+│   ├── SECURITY-REVIEW.md    <-- Self-audit: temuan, perbaikan, protokol Fiat–Shamir, risiko residual
+│   └── SECURITY-REVIEW.en.md <-- Edisi Inggris untuk juri (ringkas, setia ke versi Indonesia — ubah keduanya bersamaan)
 ├── programs/
 │   └── sikrit/
 │       ├── Cargo.toml

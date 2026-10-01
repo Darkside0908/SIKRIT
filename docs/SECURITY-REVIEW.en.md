@@ -1,0 +1,165 @@
+# SIKRIT — Security Review (English edition)
+
+> English edition of the self-audit in [`SECURITY-REVIEW.md`](SECURITY-REVIEW.md) (Indonesian), which keeps the longer
+> write-ups and original line references. **This is a self-audit, not an external audit.**
+>
+> **Scope:** the Anchor program (`programs/sikrit`), the client SDK (`sdk/`: Schnorr prover, HPKE, Shamir, capsule
+> kit, program client), the demo app (`app/`) and its relayer service (`app/api/relay.ts`).
+> **Dates:** 30 Sep – 1 Oct 2026. **Method:** manual review (cryptography and smart-contract security), real SBF
+> builds, 68 TypeScript tests (the lifecycle and relayer tests run the real SBF binary in LiteSVM with a
+> time-travelling clock), 10 Rust unit tests, a 12-step browser end-to-end run on a local validator and on devnet, and
+> compute-unit benchmarks.
+>
+> **Result:** 18 findings: 3 Critical, 4 High, 4 Medium, 6 Low, 1 Info (design). 17 are fixed in code and covered by
+> tests; SIK-11 is mitigated in the client. What remains is listed openly as residual risks R1–R18.
+
+## 1. Findings
+
+| ID | Severity | Finding | Fix | Status |
+|---|---|---|---|---|
+| SIK-01 | 🔴 Critical | Heartbeat proofs could be **replayed** forever: the Fiat–Shamir challenge hashed only `R ‖ P`, so anyone could keep a dead owner "alive" and block the inheritance | Challenge binds domain, program, capsule and a monotonic nonce (§2) | ✅ Fixed |
+| SIK-02 | 🔴 Critical | **Guardian double-voting**: approvals were a counter, so one guardian (or one leaked guardian key) could satisfy an N-of-M threshold alone | Per-guardian bitmap; a second vote fails with `GuardianAlreadyApproved` | ✅ Fixed |
+| SIK-03 | 🔴 Critical (blocker) | The on-chain Schnorr verifier **could not run**: compile error, SBF stack overflow, and a pure-Rust (curve25519-dalek) variant exceeded 1.4M CU | Point operations through Solana's curve25519 syscalls; one multiscalar multiplication per proof | ✅ Fixed |
+| SIK-04 | 🟠 High | The privacy claim collapsed: the capsule PDA was derived from the owner's wallet and `owner` was stored in plaintext | PDA from a dedicated liveness key `P`; no owner field; heartbeat needs no signer | ✅ Fixed |
+| SIK-05 | 🟠 High | A living owner could not cancel a **false trigger** (heartbeats were refused once a claim was open) | A valid heartbeat cancels a pending claim until the heir actually claims | ✅ Fixed |
+| SIK-06 | 🟠 High | **Unbounded vetoes** → permanent denial of service against the heir | Vetoes only inside the grace period, one per guardian per liveness epoch; worst-case delay bounded | ✅ Fixed |
+| SIK-07 | 🟡 Medium | Commitment `P` not validated (small-order/mixed-torsion points allow forged proofs) and no proof-of-possession (front-running, registering someone else's key) | `P` must be canonical, not the identity, in the prime-order subgroup; `create_capsule` requires a Schnorr proof over the whole config | ✅ Fixed |
+| SIK-08 | 🟡 Medium | Guardian set not validated: duplicates, the heir as guardian, the default pubkey | `CapsuleConfig::validate()` with specific errors | ✅ Fixed |
+| SIK-09 | 🔵 Low | Hand-computed account `space` | `#[derive(InitSpace)]` | ✅ Fixed |
+| SIK-10 | 🔵 Low | Broken build/test configuration (no workspace, no `idl-build`, recursive test script, placeholder program ID) | Pinned workspace + lockfile, real program ID, `npm test` | ✅ Fixed |
+| SIK-11 | ⚪ Info (design) | `claim` only flips a status; releasing the secret is not enforced cryptographically | Client custody protocol (§3): the heir holds one share (< k), guardians release only after `Claimed`, only to the heir's certified inbox | 🟡 Mitigated |
+| SIK-12 | 🟠 High (design) | Encryption keys of heirs/guardians were **unauthenticated**: whoever swapped a key in transit received the share, at sealing or at release | Wallet-signed *inbox certificates*, checked against the on-chain heir and guardians | ✅ Fixed |
+| SIK-13 | 🟡 Medium | Shamir `combine` silently returned a wrong secret for forged or missing shares | Each share is authenticated against its on-chain hash; distinct-share count checked; the payload's AEAD tag fails closed | ✅ Fixed |
+| SIK-14 | 🔵 Low | The seed phrase was split directly (non-uniform secret; share length leaked secret length) | Hybrid: split a random 32-byte key, encrypt the secret with XChaCha20-Poly1305 | ✅ Fixed |
+| SIK-15 | 🔵 Low | Keys derived from wallet signatures assumed deterministic signatures (some MPC wallets randomize) | Sign twice, verify both, refuse if they differ | ✅ Fixed |
+| SIK-16 | 🟡 Medium | App: a guardian's release state **leaked between personas/accounts**: the second guardian saw "released" while their share was never sent | Components keyed per actor; release state stored per (capsule, guardian wallet) | ✅ Fixed |
+| SIK-17 | 🔵 Low | App could be framed on hosts without security headers → clickjacking of the key-derivation signature prompt | `frame-ancestors 'none'`, `X-Frame-Options: DENY`, frame-busting, `no-referrer` | ✅ Fixed |
+| SIK-18 | 🔵 Low | Guardian discovery (5 × `getProgramAccounts` per poll) drew HTTP 429s from the public devnet RPC → guardians never saw their capsule and the release path stalled | One `getProgramAccounts` over a `dataSlice` of the guardian vector + one `getMultipleAccounts`; polling skips overlapping and hidden-tab ticks | ✅ Fixed |
+
+Selected details (the Indonesian edition has all of them):
+
+- **SIK-01.** Every `(R, s)` is public in a transaction. With `e = H(R ‖ P)` a proof stays valid forever, so anyone could
+  re-submit an old proof each interval and the heir could never claim. Tests: *rejects a replayed proof, so nobody can
+  keep a dead owner 'alive'*, *rejects proofs bound to a stale or future nonce*, and the Rust test
+  `proof_is_bound_to_nonce_capsule_domain_and_program`.
+- **SIK-03.** Measured, not assumed: with curve25519-dalek on SBF, `create_capsule` ran out of the 1.4M CU budget
+  (`exceeded CUs meter` after 1,399,850 CU) and `heartbeat` hit `Access violation in stack frame 7`. The syscalls
+  (`sol_curve_validate_point`, `sol_curve_group_op`, `sol_curve_multiscalar_mul`) verify a heartbeat in about 41k CU.
+  dalek remains for scalar arithmetic and as the host backend for unit tests; its oversized lookup tables are absent
+  from the final binary (0 `NafLookupTable` symbols in `sikrit.so`).
+- **SIK-05/06.** The owner can always answer a claim with a heartbeat until the heir claims. A guardian veto is only
+  possible inside the grace period, gives the owner a full new interval, and is limited to one per guardian until the
+  owner's next heartbeat, so malicious guardians can delay an inheritance by at most
+  `guardians × (interval + grace)`.
+- **SIK-07.** Ed25519 has cofactor 8. With a small-order `P`, proofs can be forged without the secret with probability
+  ≥ 1/8 per attempt. The program now requires `ℓ·P = O`, computed as `(ℓ − 1)·P + P` because the syscall only takes
+  canonical scalars. The registration proof signs the Borsh-encoded config, so it cannot be moved to another heir.
+- **SIK-12.** An X25519 inbox key is not a wallet key, so it travels off-chain. An inbox certificate is the holder's
+  wallet signature over `"SIKRIT inbox certificate v1: <hex inbox>"`; sealing, kit verification and release all check
+  it against the heir and guardians stored on-chain.
+
+## 2. The protocol after the fixes
+
+```
+e = SHA-512(domain ‖ program_id ‖ capsule ‖ P ‖ R ‖ context) mod ℓ          (wide reduction of 64 bytes)
+Prover:    k = hedged nonce (x, fresh randomness, transcript),  R = k·G,  s = k + e·x mod ℓ
+Verifier:  s canonical (< ℓ), R a valid point, and  s·G − e·P == R  (compared as canonical encodings)
+
+Registration:  domain = "SIKRIT:register:v1",  context = Borsh(CapsuleConfig)
+Liveness:      domain = "SIKRIT:liveness:v1",  context = heartbeat_nonce (u64 little-endian)
+```
+
+Both domains have the same length (18 bytes) and differ in content, so transcripts cannot be confused. The format is
+pinned across languages by one known-answer vector shared by the TypeScript prover tests and the Rust verifier tests.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Active: create_capsule (proof of possession)
+    Active --> Active: heartbeat (Schnorr PoK, nonce + 1)
+    Active --> ClaimPending: trigger_claim (anyone, once now - last_heartbeat >= interval)
+    ClaimPending --> ClaimPending: guardian_confirm (one vote per guardian)
+    ClaimPending --> Active: heartbeat (owner alive, claim cancelled)
+    ClaimPending --> Active: guardian_veto (inside grace, once per guardian per liveness epoch)
+    ClaimPending --> Claimed: claim (heir, grace over, approvals >= threshold)
+    Claimed --> [*]
+```
+
+Compute units, real SBF binary (LiteSVM, max observed): `create_capsule` ~69k (varies with the PDA bump search),
+`heartbeat` ~41k (41,009 CU on devnet), `trigger_claim` / `guardian_confirm` / `guardian_veto` / `claim` ~7k. All fit
+the default 200k budget.
+
+## 3. Share custody in the client (SDK)
+
+```
+dek ← random 32 B;  payload = XChaCha20-Poly1305(dek, nonce, aad = "SIKRIT:payload:v1" ‖ P ‖ k ‖ n)(secret)
+share_i = Shamir k-of-n(dek)             sealed_i = HPKE base mode (X25519, HKDF-SHA256, ChaCha20-Poly1305)
+hash_i  = SHA-256("SIKRIT:share-hash:v1" ‖ P ‖ share_i)   → stored on-chain, signed by the proof of possession
+share_0 → heir,  share_{1+g} → guardian g,  k − 1 = guardian quorum
+```
+
+Known-answer vectors: HPKE against RFC 9180 Appendix A.2.1 (key schedule, six encryptions with sequence numbers
+0–256, exported values); GF(2⁸) Shamir against a table-free reference anchored to FIPS-197 §4.2 (`{57}·{83} = {c1}`);
+inbox keys and share hashes recomputed independently with Python `hashlib`/`hmac` and pyca `cryptography`.
+
+## 4. Relayer service (`app/api/relay.ts`)
+
+The hosted devnet demo cannot depend on the public faucet, so a relayer service pays fees and new capsules' rent. It is
+also the "relayer" of the privacy story: the owner's heartbeats reach the chain with the service as the only fee payer.
+Threat model: anyone on the internet can POST transactions to it.
+
+| Control | Prevents | Test |
+|---|---|---|
+| Signs only legacy transactions with itself as fee payer and **exactly one** SIKRIT instruction with a known discriminator (the same as the SDK's) | Use as a general-purpose fee payer; a second instruction riding along | *refuses every transaction…*, *knows the same instructions as the SDK…* |
+| Its key may appear in the instruction only as `create_capsule`'s rent payer | Its signature authorizing anything else: a System transfer out of the relayer, the relayer acting as a guardian | *refuses every transaction…* |
+| Every other signature verified before sending; preflight on | Burning fees with transactions bound to fail | *refuses…*, *hands program errors back with their logs…* |
+| Per client: 10 transactions/minute, 6 new capsules/hour | Draining rent by spamming `create_capsule` from one address | *rate-limits each client…* |
+| Key only in a server environment variable, never `VITE_`-prefixed; the production bundle checked free of relay code | Key leaking through the browser bundle | bundle inspection |
+
+No findings in the released code. The tests drive the service against the real program in LiteSVM, including a whole
+relayed inheritance in which the heir and the guardian hold no SOL at all.
+
+## 5. Residual risks and limits
+
+| # | Risk | Notes and mitigation |
+|---|---|---|
+| R1 | Heartbeat **times** are public | Anyone who knows a capsule's address sees when it was last proven alive. SIKRIT hides **who**, not **when**. Roadmap: anonymous membership proofs so a heartbeat does not point at one capsule. |
+| R2 | Linking through the fee payer | If the owner's own wallet paid for a heartbeat, that transaction would link wallet and capsule. The app always uses a relayer. |
+| R3 | Heir and guardians are public | Their pubkeys are stored in plaintext. Roadmap: salted hash commitments opened when they act. |
+| R4 | Upgrade authority | On devnet a single hot key (`FNNYNGG…Vd5N`) can upgrade the program; a malicious upgrade could relax the timers so the heir claims early. Mainnet: Squads multisig with a timelock, a verifiable build, then immutable after an external audit. |
+| R5 | Delay by malicious guardians | Bounded by `guardians × (interval + grace)`. |
+| R6 | Legacy toolchain | Anchor 0.30 emits SBPF v0. A pending feature gate (SIMD-0500, inactive on devnet and mainnet as of 30 Sep 2026; our devnet deploy on 1 Oct succeeded) would block new deploys of such binaries, not their execution. Plan: Anchor 1.x after the hackathon. |
+| R7 | Rent is not reclaimable | No `close` instruction; ~0.004–0.005 SOL per capsule stays locked. |
+| R8 | Owner unaware of a trigger | Needs an off-chain watcher that alerts the owner during the grace period (roadmap). |
+| R9 | Phishing of the key-derivation signature | A site that obtains the same signature could fake heartbeats (delay the inheritance) but cannot open the secret. Mitigation: bind the app origin into the message (Sign-In-With-Solana style). |
+| R10 | Not post-quantum | X25519 and Ed25519. Kits are not stored on public permanent storage (only hashes on-chain), limiting harvest-now-decrypt-later. Roadmap: X-Wing hybrid KEM; the kit format is versioned. |
+| R11 | JavaScript side channels | JS gives no constant-time guarantees; the Shamir library uses table lookups. Operations run once, on the user's device. |
+| R12 | Wallet compatibility | Requires `signMessage` with deterministic Ed25519 over raw bytes; randomizing MPC wallets are refused at setup; Ledger needs separate support. |
+| R13 | Heir loses their wallet | Their share cannot be opened again; recovery runs through enough guardians releasing to a new inbox the on-chain heir wallet certifies. |
+| R14 | Transitive npm advisories | `uuid` chains through `@solana/web3.js` and `toml` in the test tooling; the vulnerable code paths are not reached (analysis in the Indonesian edition). Monitored. |
+| R15 | Guardian collusion without the heir | With k = quorum + 1 and at least k guardians, k colluding guardians can open the kit without the heir. Inherent to threshold schemes and also the heir's recovery path (R13). The create wizard warns whenever this path exists; quorum = all guardians removes it. |
+| R16 | Demo keys in `localStorage` | Demo personas and the in-browser relayer keep hot keys in the browser; devnet/localnet only, labelled as demo, protected by a strict CSP. Real wallets never store keys in the app. |
+| R17 | Guardians trust their RPC | A malicious RPC could report `Claimed` early; the share still opens only for the heir's certified inbox, so this needs heir + RPC collusion. Mitigation: check the `claim` transaction on an explorer; roadmap: cross-check two RPCs. |
+| R18 | The relayer is an observation and payment point | Its operator sees the IP and timing of each heartbeat and which capsule it is for (the same exposure an RPC node gets, concentrated in one operator): run your own relayer, use Tor/VPN. An attacker with many IPs can drain the devnet relayer's rent budget (demo downtime, no user funds at risk). Off Vercel, `x-forwarded-for` can be spoofed to dodge per-client limits. |
+
+## 6. Claims we make, and claims we don't
+
+- ✅ A SIKRIT heartbeat is a zero-knowledge proof of knowledge (Schnorr, Fiat–Shamir) from a dedicated liveness key.
+  No wallet or owner identity appears in the state, the events or the heartbeat instruction, and anyone can relay it.
+  On devnet, a full inheritance ran with the owner's wallet in 0 of 6 capsule transactions; that wallet has never
+  touched the chain.
+- ❌ We do **not** claim that heartbeat times are hidden (R1), nor that guardians and heirs cannot see that the owner is
+  alive: anyone who knows the capsule address can read `last_heartbeat`.
+- A Schnorr NIZK is close to a Schnorr signature by a single-purpose key. Its strength here is **unlinkability +
+  replay protection + domain separation**, not SNARK machinery.
+
+## 7. Reproduce
+
+```bash
+npm run build                 # anchor build: SBF + IDL (Solana 1.18.17, Anchor CLI 0.30.2)
+npm run test:rust             # 10 Rust unit tests: Schnorr verifier, config validation, cross-language vector
+npm test                      # 68 tests on Node 24: LiteSVM lifecycle, SDK vectors and attacks, client, relayer
+cd app && npm run e2e         # the whole story in Chrome on a local validator + on-chain privacy check
+npm run e2e:devnet            # the same through the production bundle and the relayer service, on devnet
+```
+
+Toolchain details: [`DEVELOPMENT.md`](DEVELOPMENT.md) (Indonesian).

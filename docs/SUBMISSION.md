@@ -92,7 +92,7 @@ the form asks⟩.
 | Pitch deck (PDF) | `docs/deck/SIKRIT-deck.pdf` (source `docs/deck/index.html`) |
 | Logo | `docs/brand/sikrit-logo-1024.png` · cover image `docs/brand/sikrit-cover.png` |
 | Screenshots | `docs/screenshots/*.webp` |
-| Security review | `docs/SECURITY-REVIEW.md` |
+| Security review | `docs/SECURITY-REVIEW.en.md` (English) · full Indonesian edition `docs/SECURITY-REVIEW.md` |
 
 ## 8. Go-to-market, demand validation, distribution
 
