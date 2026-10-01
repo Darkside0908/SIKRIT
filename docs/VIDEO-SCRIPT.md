@@ -36,19 +36,21 @@ thousand") · 0.0078 SOL for 30 years · 22.93 M investors (say "almost 23 milli
 
 ## 2. Product demo — "One family, five wallets, one browser" (target 2:50)
 
-Setup: `npm run build` once in the repo root, then `cd app && npm run localnet` (validator + program + app at
-http://localhost:5173). Chrome window at 1440 × 900, zoom 100 %, bookmarks bar hidden. Click **Reset demo** in the footer
-before recording. The program enforces 60-second minimum timers, so the two waits are jump cuts with an on-screen
-"+60 s" title.
+Setup (pick one): **localnet**, the most predictable: `npm run build` once in the repo root, then
+`cd app && npm run localnet` (validator + program + app at http://localhost:5173); or **devnet**: the hosted app on
+Vercel once it is deployed (program `FJKqf…Tc45F`, fees paid by the relayer service). Chrome window at 1440 × 900, zoom
+100 %, bookmarks bar hidden. Click **Reset demo** in the footer before recording. The program enforces 60-second
+minimum timers, so the two waits are jump cuts with an on-screen "+60 s" title (on devnet, pick **1 minute** in the
+form: its default is 3).
 
 | Time | Screen | Action | Voice-over |
 |---|---|---|---|
-| 0:00 | Home | Slow scroll over the hero | "This is SIKRIT running against a local Solana validator with the real program. Five demo wallets play one family: Pak Arif, his daughter Sari, and three guardians." |
+| 0:00 | Home | Slow scroll over the hero | "This is SIKRIT running against a local Solana validator with the real program" (devnet: "This is SIKRIT live on Solana devnet"). "Five demo wallets play one family: Pak Arif, his daughter Sari, and three guardians." |
 | 0:12 | Owner | **Derive my liveness key** | "Pak Arif's wallet signs a fixed message. SIKRIT hashes that signature into a separate secret, x. Only its public key goes on-chain, and he can re-derive it from his wallet any time." |
 | 0:28 | Owner · step 1 | **Invite the demo family** | "Sari and the guardians send invites: encryption keys signed by their own wallets. Every signature is checked, so nobody in the middle can swap in a key." |
 | 0:40 | Owner · steps 2–3 | **Use a sample seed phrase**; show 1 min / 1 min / quorum 2 | "He pastes his seed phrase. It's encrypted here, in the browser. The key is split three-of-four: Sari's share alone reveals nothing." |
 | 0:55 | Owner | **Seal the capsule** → inspector `create_capsule` | "One transaction, paid by a relayer. It stores the public key, the rules, and a hash per share. No wallet of his signs it." |
-| 1:08 | Owner | **Send ZK heartbeat** → inspector `heartbeat` | "Now a heartbeat: a zero-knowledge proof made in the browser. Three accounts: relayer, capsule, program. Seventy-two bytes: R and s. His wallet: not present." (optional: click the tx link, show the same accounts on Solana Explorer) |
+| 1:08 | Owner | **Send ZK heartbeat** → inspector `heartbeat` | "Now a heartbeat: a zero-knowledge proof made in the browser. Three accounts: relayer, capsule, program. Seventy-two bytes: R and s. His wallet: not present." (optional: click the tx link: Solana Explorer shows the same accounts and, on devnet, decodes the SIKRIT `heartbeat` instruction from the on-chain IDL) |
 | 1:30 | — | Title card **+60 s · Pak Arif falls silent** | — |
 | 1:33 | Heir (Sari) | **Open the claim** | "He misses his interval. Anyone may now open a claim — here, Sari." |
 | 1:42 | Guardian (Budi → Dewi) | **Confirm the claim** twice; hover **Veto** | "Two of three guardians confirm. If he were alive, a guardian could veto, or he could simply send another heartbeat to cancel the claim." |
@@ -59,7 +61,8 @@ before recording. The program enforces 60-second minimum timers, so the two wait
 | 2:40 | Public capsule page | Scroll the public record | "And this is everything the world can learn about the capsule. The owner isn't in it. Prove you're alive — reveal nothing else." |
 | 2:50 | End card | Logo + repo URL | — |
 
-**Automatic B-roll (backup):** `RECORD_DIR=/tmp/rec SLOWMO=450 npm run e2e` (in `app/`, needs `ffmpeg` on PATH)
+**Automatic B-roll (backup):** `RECORD_DIR=/tmp/rec SLOWMO=450 npm run e2e` (in `app/`, needs `ffmpeg` on PATH; or
+`npm run e2e:devnet` with the same variables for footage on devnet through the relayer service, ~0.004 SOL)
 plays the whole story by itself and writes `/tmp/rec/demo-flow.mp4`: 1440 × 900, ~66 s, the two 60-second waits already
 cut out, key screens held for a few seconds. There is no mouse cursor, so use it under a voice-over or as cut-aways. A
 copy from 1 Oct is in `app/e2e/out/demo-flow-broll.mp4` (gitignored, regenerate any time).
