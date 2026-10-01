@@ -53,6 +53,9 @@ export default defineConfig(({ mode }) => {
     (url): url is string => Boolean(url),
   );
   return {
+    // Relative asset URLs + the hash router: the build runs from any static host or subpath
+    // (Vercel, GitHub Pages project sites, IPFS) without rewrites.
+    base: "./",
     plugins: [react(), tailwindcss(), contentSecurityPolicy(rpcUrls)],
     resolve: {
       alias: { "@sdk": fileURLToPath(new URL("../sdk", import.meta.url)) },
