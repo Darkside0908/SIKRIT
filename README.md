@@ -156,6 +156,8 @@ verifier that could not run (moved to syscalls), encryption keys without authent
 certificates), unauthenticated Shamir reconstruction, a public family roster that led to the owner (now salted
 commitments), heartbeat proofs that never expired, and more.
 
+Found something? Please report it privately, as described in [SECURITY.md](SECURITY.md).
+
 What is public by design, and stated in the pitch:
 
 - **When** heartbeats happen (R1), and each family member at the moment they act: a guardian confirming or vetoing,

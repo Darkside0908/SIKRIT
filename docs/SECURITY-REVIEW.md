@@ -179,7 +179,7 @@ stateDiagram-v2
 | Instruksi | CU (maks teramati) |
 |---|---|
 | `create_capsule` (termasuk validasi ℓ·P dan proof-of-possession) | ~66.000–74.000 (bervariasi: pencarian bump PDA bergantung commitment) |
-| `heartbeat` (termasuk cek masa berlaku) | 41.447 |
+| `heartbeat` (termasuk cek masa berlaku) | 41.444–41.460 (bervariasi beberapa CU antar bukti) |
 | `trigger_claim` | 7.568 |
 | `guardian_confirm` (termasuk SHA-256 pembuka komitmen) | 8.015 |
 | `guardian_veto` | 7.558 |

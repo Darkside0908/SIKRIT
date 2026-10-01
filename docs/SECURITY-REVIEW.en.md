@@ -109,7 +109,7 @@ stateDiagram-v2
 ```
 
 Compute units, real SBF binary (LiteSVM, max observed, v2): `create_capsule` ~66–74k (varies with the PDA bump
-search), `heartbeat` 41,447 (including the expiry check), `trigger_claim` / `guardian_veto` ~7.6k,
+search), `heartbeat` 41,444–41,460 (including the expiry check; varies by a few CU per proof), `trigger_claim` / `guardian_veto` ~7.6k,
 `guardian_confirm` / `claim` ~8–8.3k (including the SHA-256 opening). All fit the default 200k budget. On devnet (v2
 proof capsule `8q5t2g…TRKi`, 2 Oct 2026) the heartbeat took 41,444 CU and 5,000 lamports.
 
