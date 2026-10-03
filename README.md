@@ -150,11 +150,12 @@ docs/                        pitch, research, technical spec, security review, d
 
 SIKRIT is a research prototype and **has not been audited externally**. It ships with a self-audit,
 [docs/SECURITY-REVIEW.en.md](docs/SECURITY-REVIEW.en.md) (full Indonesian edition:
-[docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md)). It covers the program, SDK, app and relayer service, with 20
+[docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md)). It covers the program, SDK, app and relayer service, with 22
 findings, all High/Critical fixed and tested: proof replay, guardian double-voting, unbounded veto (DoS), an on-chain
 verifier that could not run (moved to syscalls), encryption keys without authentication (now wallet-signed inbox
 certificates), unauthenticated Shamir reconstruction, a public family roster that led to the owner (now salted
-commitments), heartbeat proofs that never expired, and more.
+commitments), heartbeat proofs that never expired, a lost confirmation that left a registered capsule without its
+kit, and more.
 
 Found something? Please report it privately, as described in [SECURITY.md](SECURITY.md).
 

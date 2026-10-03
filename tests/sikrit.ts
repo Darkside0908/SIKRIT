@@ -678,8 +678,21 @@ describe("SIKRIT — privacy-preserving dead man's switch", () => {
       expect((await service.relay(posted([capsule.ix], relayer.publicKey))).status).to.equal(200);
       const before = h.svm.getBalance(relayer.publicKey);
       const beat = () => beatIx(capsule);
+      // Accounts the program ignores, signed by throwaway keys: each signature is another 5 000-lamport fee.
+      const extra = Array.from({ length: 8 }, () => Keypair.generate());
+      const padded = (ix: TransactionInstruction, signers: Keypair[]) =>
+        new TransactionInstruction({
+          programId: ix.programId,
+          data: ix.data,
+          keys: [...ix.keys, ...signers.map(({ publicKey }) => ({ pubkey: publicKey, isSigner: true, isWritable: false }))],
+        });
 
       const refusals: [string, unknown, RegExp][] = [
+        ["a heartbeat padded with 8 extra signers (9× the fee)", posted([padded(beat(), extra)], relayer.publicKey, extra), /takes exactly 1 account/],
+        ["a confirmation padded with one extra signer", posted([padded(capsule.confirm(1), [extra[0]])], relayer.publicKey, [guardian, extra[0]]), /takes exactly 2 accounts/],
+        ["a heartbeat that asks for a second signature",
+          posted([new TransactionInstruction({ ...beat(), keys: [{ pubkey: capsule.address, isSigner: true, isWritable: true }] })], relayer.publicKey),
+          /too many signatures/],
         ["drain through a System transfer",
           posted([SystemProgram.transfer({ fromPubkey: relayer.publicKey, toPubkey: attacker.publicKey, lamports: LAMPORTS_PER_SOL })], relayer.publicKey),
           /only SIKRIT instructions/],

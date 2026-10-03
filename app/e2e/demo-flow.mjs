@@ -18,6 +18,9 @@
  *   SLOWMO=ms    pause between browser actions (makes a recording watchable)
  *   BROWSER_RELAYER_KEY  base64 secret key the app's in-browser relayer starts with (scripts/devnet-e2e.mjs
  *                funds it when it tests the static-host fallback on devnet, whose faucet refuses the app)
+ *   LOSE_CONFIRMATION=0  register the capsule normally. By default (unless recording or curating screenshots) the
+ *                run lets the registration land but drops the reply, as a relayer timeout would: the app must
+ *                still end up with the capsule and its kit (SIK-22)
  *
  * When the host runs the relayer service (api/relay.ts: vite dev/preview, Vercel), the chain check also
  * confirms it paid for every capsule transaction.
@@ -37,6 +40,7 @@ const OUT = new URL("./out/", import.meta.url).pathname;
 const SHOTS = process.env.SHOTS_DIR;
 const RECORD = process.env.RECORD_DIR;
 const BROWSER_RELAYER = process.env.BROWSER_RELAYER_KEY;
+const LOSE_CONFIRMATION = (process.env.LOSE_CONFIRMATION ?? (SHOTS || RECORD ? "0" : "1")) !== "0";
 const SAMPLE_SEED = "abandon ability able about above absent absorb abstract absurd abuse access accident";
 const MINUTE = 60_000;
 
@@ -55,9 +59,11 @@ const page = await context.newPage();
 const recorder = RECORD ? await record(page, RECORD) : undefined;
 const problems = [];
 let rateLimited = 0;
+/** While a failure is injected on purpose, the errors it causes are expected. */
+let injecting = false;
 page.on("pageerror", (e) => problems.push(`pageerror: ${e.message}`));
 page.on("console", (m) => {
-  if (m.type() !== "error") return;
+  if (m.type() !== "error" || injecting) return;
   // A public RPC's 429s are retried by web3.js; they fail the run only if a step stalls because of them.
   if (/\b429\b/.test(m.text())) rateLimited++;
   else problems.push(`console.error: ${m.text()}`);
@@ -141,6 +147,31 @@ async function enabled(locator, timeout) {
   return locator;
 }
 
+/**
+ * Lets the next transaction the app submits reach the chain but never answers it, as when a relayer function times
+ * out or the connection drops after the broadcast. Returns a function that stops intercepting.
+ */
+async function loseNextConfirmation() {
+  let lost = false;
+  const handler = async (route) => {
+    const request = route.request();
+    const post = request.method() === "POST";
+    const relayed = post && new URL(request.url()).pathname.endsWith("/api/relay");
+    const broadcast = post && /"method":\s*"sendTransaction"/.test(request.postData() ?? "");
+    if (lost || !(relayed || broadcast)) return route.fallback();
+    lost = true;
+    await route.fetch(); // the transaction goes out…
+    await route.abort("timedout"); // …and the app never hears back
+  };
+  injecting = true;
+  await page.route("**/*", handler);
+  return async () => {
+    await page.unroute("**/*", handler);
+    injecting = false;
+    if (!lost) throw new Error("the registration was never intercepted");
+  };
+}
+
 let capsule;
 /** Demo personas by id (arif, sari, budi, dewi, rizal) → wallet. */
 let cast;
@@ -172,10 +203,18 @@ try {
     await curate("create", page.locator("main"));
   });
 
-  await step("owner seals the seed phrase and registers the capsule", async () => {
+  await step(`owner seals the seed phrase and registers the capsule${LOSE_CONFIRMATION ? " (its confirmation lost)" : ""}`, async () => {
+    const restore = LOSE_CONFIRMATION ? await loseNextConfirmation() : undefined;
     await button("Seal the capsule").click();
     await button("Send ZK heartbeat").waitFor({ timeout: MINUTE });
-    await text("create_capsule").waitFor();
+    if (restore) {
+      // The app never heard that the registration landed; the dashboard must still hold the kit, adopted from the
+      // copy filed before broadcasting.
+      await text("Delivered to the family's inboxes").waitFor({ timeout: MINUTE });
+      await restore();
+    } else {
+      await text("create_capsule").waitFor();
+    }
     await dwell(3000, section("What the chain sees"));
     await shot("02-sealed");
     const state = await page.evaluate(() => ({

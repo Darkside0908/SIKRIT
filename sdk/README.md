@@ -136,8 +136,9 @@ tag authenticates the result. A wrong share fails with a clear error instead of 
 
 - **Relayer.** `heartbeat` and `trigger_claim` take no signer, so any fee payer can submit them. The relayer in the demo
   ([`app/api/relay.ts`](../app/api/relay.ts), about 200 lines) adds a policy around that: exactly one SIKRIT
-  instruction per transaction, with the relayer only as fee payer or as the rent payer of `create_capsule`. That
-  policy leaves it nothing to sign except SIKRIT fees.
+  instruction per transaction, with exactly that instruction's accounts, and the relayer only as fee payer or as the
+  rent payer of `create_capsule`. That policy leaves it nothing to sign except SIKRIT fees, at most two signatures'
+  worth per transaction (the program ignores extra accounts, so a relayer that accepted them would pay for padding).
 - **Watcher.** `fetchCapsule` + `timeline(capsule, now)` give `canTrigger`, `canVeto`, `canClaim` and the deadlines.
   An owner's watcher that sees a pending claim should alert them while a heartbeat can still cancel it. The program
   also emits Anchor events: `CapsuleCreated`, `HeartbeatVerified`, `ClaimTriggered`, `GuardianConfirmed`,

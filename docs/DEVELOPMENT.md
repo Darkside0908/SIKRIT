@@ -48,6 +48,10 @@ npm run localnet              # solana-test-validator + program SIKRIT + app di 
 npm run e2e                   # (opsional) jalankan seluruh cerita demo otomatis di Chrome, ~2,5 menit
 ```
 
+E2E secara default membuang balasan transaksi registrasi setelah transaksinya terkirim (seperti function relayer yang
+kena timeout) dan menuntut app tetap memegang kapsul beserta kit-nya (SIK-22); `LOSE_CONFIRMATION=0` menjalankan
+registrasi normal. Saat merekam (`RECORD_DIR`) atau mengambil screenshot (`SHOTS_DIR`) injeksi itu otomatis mati.
+
 Mode demo memakai lima persona (Pak Arif, Sari, Budi, Dewi, Rizal) dengan keypair di localStorage browser dan
 relayer sebagai fee payer — semua peran bisa dimainkan di satu tab. Wallet asli (Phantom/Solflare/Backpack via
 Wallet Standard) juga bisa dipakai untuk setiap peran. Build produksi (`npm run build` di `app/`) default ke devnet
@@ -123,8 +127,9 @@ Semua fee (dan rent kapsul baru) dibayar relayer, bukan wallet pemilik. App menc
 | Vercel (Root Directory `app`) | service: function `api/relay.ts`, kunci dari env `RELAYER_SECRET_KEY` |
 | GitHub Pages | in-browser (tidak ada function) — pengunjung butuh SOL devnet dari faucet |
 
-Kebijakan tanda tangan (tepat satu instruksi SIKRIT, relayer hanya fee payer + payer rent `create_capsule`, semua
-tanda tangan lain diverifikasi, preflight aktif, batas per IP) dan risikonya ada di security review §7. Env server:
+Kebijakan tanda tangan (tepat satu instruksi SIKRIT dengan akun persis milik instruksi itu, relayer hanya fee payer +
+payer rent `create_capsule`, paling banyak dua tanda tangan, semua tanda tangan lain diverifikasi, preflight aktif,
+batas per IP) dan risikonya ada di security review §7. Env server:
 `RELAYER_SECRET_KEY` (array JSON seperti keluaran `solana-keygen`, **jangan** diberi prefiks `VITE_`), `RPC_URL`
 (opsional; default RPC publik devnet — RPC privat aman di sini karena tidak pernah sampai ke browser).
 

@@ -5,14 +5,15 @@
 >
 > **Scope:** the Anchor program (`programs/sikrit`), the client SDK (`sdk/`: Schnorr prover, HPKE, Shamir, capsule
 > kit, program client), the demo app (`app/`) and its relayer service (`app/api/relay.ts`).
-> **Dates:** 30 Sep – 2 Oct 2026. **Method:** manual review (cryptography and smart-contract security), real SBF
+> **Dates:** 30 Sep – 3 Oct 2026. **Method:** manual review (cryptography and smart-contract security), real SBF
 > builds, 73 TypeScript tests (the lifecycle and relayer tests run the real SBF binary in LiteSVM with a
 > time-travelling clock), 12 Rust unit tests, a 12-step browser end-to-end run on a local validator and on devnet, and
 > compute-unit benchmarks.
 >
-> **Result:** 20 findings: 3 Critical, 4 High, 5 Medium, 7 Low, 1 Info (design). 19 are fixed in code and covered by
+> **Result:** 22 findings: 3 Critical, 4 High, 6 Medium, 8 Low, 1 Info (design). 21 are fixed in code and covered by
 > tests; SIK-11 is mitigated in the client. What remains is listed openly as residual risks R1–R18. SIK-19 and SIK-20
-> led to protocol v2 (§2): a sealed roster and short-lived heartbeat proofs.
+> led to protocol v2 (§2): a sealed roster and short-lived heartbeat proofs. SIK-21 and SIK-22 came from an independent
+> re-audit of the v2 code on 3 Oct.
 
 ## 1. Findings
 
@@ -38,6 +39,8 @@
 | SIK-18 | 🔵 Low | Guardian discovery (5 × `getProgramAccounts` per poll) drew HTTP 429s from the public devnet RPC → guardians never saw their capsule and the release path stalled | One `getProgramAccounts` over a `dataSlice` of the guardian vector + one `getMultipleAccounts` (since v2: no chain search at all, members find capsules through their kit) | ✅ Fixed |
 | SIK-19 | 🟡 Medium | The heir and guardians were stored as plaintext wallets: anyone who knows one family member's wallet could find the owner's capsule and watch its heartbeats | Protocol v2: salted member commitments, opened only by the member's own confirm, veto or claim (§2) | ✅ Fixed |
 | SIK-20 | 🔵 Low | Heartbeat proofs never expired: a relayer that held one back could revive a silent owner once, or cancel a claim | Protocol v2: the proof binds an expiry at most one hour ahead of the cluster clock (§2) | ✅ Fixed |
+| SIK-21 | 🔵 Low | The relayer service paid for extra signatures: a heartbeat padded with throwaway signers made it pay up to 9× the fee | Exact account count per instruction and at most 1–2 signatures (§4) | ✅ Fixed |
+| SIK-22 | 🟡 Medium | A lost registration confirmation discarded the kit: the capsule was registered without one, and the owner's wallet could never register again | The kit is filed as pending before the broadcast; the dashboard adopts the pending kit that matches the chain | ✅ Fixed |
 
 Selected details (the Indonesian edition has all of them):
 
@@ -71,6 +74,22 @@ Selected details (the Indonesian edition has all of them):
   chain stayed valid forever. A relayer that withheld the owner's last heartbeat (and reported a failure) could submit
   it after the owner's death, delaying the inheritance by up to an interval plus grace. Now the expiry is part of the
   challenge and the program accepts it only while `now ≤ expires_at ≤ now + 3600`; the app gives proofs 10 minutes.
+- **SIK-21.** The relayer checked the fee payer, the single SIKRIT instruction and where its own key appears, but not
+  how many accounts the instruction carried. Anchor ignores extra accounts, and the fee is 5,000 lamports per signature,
+  so anyone with a capsule could pad their own heartbeat with throwaway signers. Against the real program binary in
+  LiteSVM, a heartbeat with 8 extra signers was relayed (HTTP 200) and cost the relayer 45,000 lamports instead of
+  5,000: a 9× faster way to drain the devnet demo's relayer, with no user funds at risk. The relayer now requires each
+  instruction's exact account count (`create_capsule` 3, `heartbeat`/`trigger_claim` 1, confirm/veto/claim 2) and at
+  most one or two signatures.
+- **SIK-22.** The create wizard filed the kit, the only copy of the members' salts and the sealed shares, only after
+  `create_capsule` was confirmed. A confirmation can fail after the transaction landed: a serverless relayer timing out
+  after the broadcast, a dropped connection, a rate-limited public RPC, a closed tab. The capsule then existed without a
+  kit, and since its address derives deterministically from the owner's wallet and there is no update or close
+  instruction (R7), that wallet could never register another one. The browser end-to-end test now lets the
+  registration land and drops the reply (through the relayer service, or at the RPC's `sendTransaction` for the
+  in-browser relayer): it failed before the fix, with an *Alive* capsule and "No copy of the kit in this browser", and
+  passes after it. The kit is filed as pending before the broadcast, and the dashboard adopts the pending kit that
+  `verifyKit` matches to the chain (salts and share hashes are fresh per seal, so exactly one attempt can match).
 
 ## 2. The protocol after the fixes (v2)
 
@@ -141,11 +160,13 @@ Threat model: anyone on the internet can POST transactions to it.
 | Signs only legacy transactions with itself as fee payer and **exactly one** SIKRIT instruction with a known discriminator (the same as the SDK's) | Use as a general-purpose fee payer; a second instruction riding along | *refuses every transaction…*, *knows the same instructions as the SDK…* |
 | Its key may appear in the instruction only as `create_capsule`'s rent payer | Its signature authorizing anything else: a System transfer out of the relayer, the relayer acting as a guardian | *refuses every transaction…* |
 | Every other signature verified before sending; preflight on | Burning fees with transactions bound to fail | *refuses…*, *hands program errors back with their logs…* |
+| Exactly the instruction's accounts, and at most one or two signatures (SIK-21) | Paying for throwaway signers padded onto an instruction (5,000 lamports per signature) | *refuses every transaction…* (heartbeat + 8 signers, confirmation + 1 signer, a heartbeat asking for a second signature) |
 | Per client: 10 transactions/minute, 6 new capsules/hour | Draining rent by spamming `create_capsule` from one address | *rate-limits each client…* |
 | Key only in a server environment variable, never `VITE_`-prefixed; the production bundle checked free of relay code | Key leaking through the browser bundle | bundle inspection |
 
-No findings in the released code. The tests drive the service against the real program in LiteSVM, including a whole
-relayed inheritance in which the heir and the guardian hold no SOL at all.
+The 1 Oct review found nothing in the released code; the 3 Oct re-audit found the per-signature fee gap (SIK-21). The
+tests drive the service against the real program in LiteSVM, including a whole relayed inheritance in which the heir
+and the guardian hold no SOL at all.
 
 ## 5. Residual risks and limits
 
@@ -157,7 +178,7 @@ relayed inheritance in which the heir and the guardian hold no SOL at all.
 | R4 | Upgrade authority | On devnet a single hot key (`FNNYNGG…Vd5N`) can upgrade the program; a malicious upgrade could relax the timers so the heir claims early. Mainnet: Squads multisig with a timelock, a verifiable build, then immutable after an external audit. |
 | R5 | Delay by malicious guardians | Bounded by `guardians × (interval + grace)`. |
 | R6 | Legacy toolchain | Anchor 0.30 emits SBPF v0. A pending feature gate (SIMD-0500, inactive on devnet and mainnet as of 30 Sep 2026; our devnet deploy on 1 Oct succeeded) would block new deploys of such binaries, not their execution. Plan: Anchor 1.x after the hackathon. |
-| R7 | Rent is not reclaimable | No `close` instruction; ~0.004–0.005 SOL per capsule stays locked. |
+| R7 | Rent is not reclaimable | No `close` instruction; ~0.004–0.005 SOL per capsule stays locked (0.0039 SOL on devnet for the 637-byte account, 3 Oct 2026). |
 | R8 | Owner unaware of a trigger | Needs an off-chain watcher that alerts the owner during the grace period (roadmap). |
 | R9 | Phishing of the key-derivation signature | A site that obtains the same signature could fake heartbeats (delay the inheritance) but cannot open the secret. Mitigation: bind the app origin into the message (Sign-In-With-Solana style). |
 | R10 | Not post-quantum | X25519 and Ed25519. Kits are not stored on public permanent storage (only hashes on-chain), limiting harvest-now-decrypt-later. Roadmap: X-Wing hybrid KEM; the kit format is versioned. |
@@ -168,7 +189,7 @@ relayed inheritance in which the heir and the guardian hold no SOL at all.
 | R15 | Guardian collusion without the heir | With k = quorum + 1 and at least k guardians, k colluding guardians can open the kit without the heir. Inherent to threshold schemes and also the heir's recovery path (R13). The create wizard warns whenever this path exists; quorum = all guardians removes it. |
 | R16 | Demo keys in `localStorage` | Demo personas and the in-browser relayer keep hot keys in the browser; devnet/localnet only, labelled as demo, protected by a strict CSP. Real wallets never store keys in the app. |
 | R17 | Guardians trust their RPC | A malicious RPC could report `Claimed` early; the share still opens only for the heir's certified inbox, so this needs heir + RPC collusion. Since v2 the release target is bound to the committed heir, so an RPC that names another heir is refused. Mitigation: check the `claim` transaction on an explorer; roadmap: cross-check two RPCs. |
-| R18 | The relayer is an observation and payment point | Its operator sees the IP and timing of each heartbeat and which capsule it is for (the same exposure an RPC node gets, concentrated in one operator): run your own relayer, use Tor/VPN. An attacker with many IPs can drain the devnet relayer's rent budget (demo downtime, no user funds at risk). Off Vercel, `x-forwarded-for` can be spoofed to dodge per-client limits. |
+| R18 | The relayer is an observation and payment point | Its operator sees the IP and timing of each heartbeat and which capsule it is for (the same exposure an RPC node gets, concentrated in one operator): run your own relayer, use Tor/VPN. An attacker with many IPs can drain the devnet relayer's rent budget (~0.0039 SOL per capsule; at most two signatures per transaction since SIK-21; demo downtime, no user funds at risk). Off Vercel, `x-forwarded-for` can be spoofed to dodge per-client limits. |
 
 ## 6. Claims we make, and claims we don't
 
@@ -189,7 +210,7 @@ relayed inheritance in which the heir and the guardian hold no SOL at all.
 npm run build                 # anchor build: SBF + IDL (Solana 1.18.17, Anchor CLI 0.30.2)
 npm run test:rust             # 12 Rust unit tests: Schnorr verifier, member commitments, config, cross-language vectors
 npm test                      # 73 tests on Node 24: LiteSVM lifecycle, SDK vectors and attacks, client, relayer
-cd app && npm run e2e         # the whole story in Chrome on a local validator + on-chain privacy check
+cd app && npm run e2e         # the whole story in Chrome on a local validator (registration reply dropped, SIK-22) + on-chain privacy check
 npm run e2e:devnet            # the same through the production bundle and the relayer service, on devnet
 ```
 

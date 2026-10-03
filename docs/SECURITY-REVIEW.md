@@ -1,8 +1,8 @@
 # SIKRIT — Security & Code Review (`programs/sikrit`)
 
-> **Scope:** `programs/sikrit/src/lib.rs` versi awal (draft v0.1), konfigurasi build (`Anchor.toml`, `Cargo.toml`), desain kriptografi Schnorr proof-of-liveness, dan (sejak 30 Sep malam) protokol custody share di SDK client (`sdk/hpke.ts`, `sdk/shamir.ts`, `sdk/kit.ts`) — lihat §5; frontend (§6), relayer service `app/api/relay.ts` (§7) dan protokol v2 (§9).
-> **Tanggal:** 30 September – 2 Oktober 2026 · **Metode:** review manual (kriptografi + keamanan smart contract), kompilasi SBF nyata, 12 unit test Rust, 73 test TypeScript (lifecycle di LiteSVM dengan time-travel, SDK, client, relayer), E2E Chrome melawan validator lokal dan devnet, dan benchmark compute unit.
-> **Hasil:** 20 temuan — 3 Critical, 4 High, 5 Medium, 7 Low, 1 Info (desain). Sembilan belas sudah diperbaiki di kode; SIK-11 dimitigasi di client (urutan release tetap janji guardian, bukan paksaan kriptografis). SIK-16/17 berasal dari audit akhir frontend, SIK-18 dari E2E pertama melawan devnet (§6), SIK-19/20 dari review protokol setelah deploy (§9).
+> **Scope:** `programs/sikrit/src/lib.rs` versi awal (draft v0.1), konfigurasi build (`Anchor.toml`, `Cargo.toml`), desain kriptografi Schnorr proof-of-liveness, dan (sejak 30 Sep malam) protokol custody share di SDK client (`sdk/hpke.ts`, `sdk/shamir.ts`, `sdk/kit.ts`) — lihat §5; frontend (§6), relayer service `app/api/relay.ts` (§7), protokol v2 (§9) dan re-audit independen kode v2 (§10).
+> **Tanggal:** 30 September – 3 Oktober 2026 · **Metode:** review manual (kriptografi + keamanan smart contract), kompilasi SBF nyata, 12 unit test Rust, 73 test TypeScript (lifecycle di LiteSVM dengan time-travel, SDK, client, relayer), E2E Chrome melawan validator lokal dan devnet, dan benchmark compute unit.
+> **Hasil:** 22 temuan — 3 Critical, 4 High, 6 Medium, 8 Low, 1 Info (desain). Dua puluh satu sudah diperbaiki di kode; SIK-11 dimitigasi di client (urutan release tetap janji guardian, bukan paksaan kriptografis). SIK-16/17 berasal dari audit akhir frontend, SIK-18 dari E2E pertama melawan devnet (§6), SIK-19/20 dari review protokol setelah deploy (§9), SIK-21/22 dari re-audit kode v2 (§10).
 
 ---
 
@@ -30,6 +30,8 @@
 | SIK-18 | 🔵 Low | Discovery guardian (5 × `getProgramAccounts` per polling) ter-rate-limit RPC publik → guardian tak melihat kapsulnya, jalur release macet | ✅ Fixed (§6) |
 | SIK-19 | 🟡 Medium | Heir & guardian plaintext on-chain: siapa pun yang tahu wallet seorang anggota keluarga bisa menemukan kapsul pemilik dan memantau heartbeat-nya | ✅ Fixed (§9, protokol v2) |
 | SIK-20 | 🔵 Low | Bukti heartbeat tanpa masa berlaku: relayer yang menahan bukti bisa "menghidupkan" pemilik yang sudah diam sekali lagi | ✅ Fixed (§9, protokol v2) |
+| SIK-21 | 🔵 Low | Relayer service membayar tanda tangan tambahan: heartbeat yang ditempeli signer sekali pakai membuatnya membayar fee hingga 9× | ✅ Fixed (§10) |
+| SIK-22 | 🟡 Medium | Konfirmasi registrasi yang hilang membuang kit: kapsul terdaftar tanpa kit, dan wallet pemilik tidak bisa mendaftar lagi | ✅ Fixed (§10) |
 
 Nomor baris di bawah merujuk ke **draft awal** `lib.rs`.
 
@@ -201,7 +203,7 @@ Semua di bawah budget default 200.000 CU per instruksi → tidak perlu instruksi
 | R4 | Upgrade authority | Program Solana dapat di-upgrade oleh deployer. Di devnet (deploy 1 Okt 2026) authority = satu hot key `FNNYNGG688Y2wp2Nnb7K37ZsBTBF2HAFVFSxUh8iVd5N`. Upgrade jahat (atau kunci bocor) bisa melonggarkan timer → ahli waris mengklaim lebih awal → guardian me-release; rahasia tetap butuh share ahli waris + kuorum guardian, tetapi gerbang "pemilik diam" hilang. Untuk mainnet: authority ke multisig (Squads) dengan timelock, build terverifikasi (`solana-verify`), lalu immutable setelah audit eksternal. |
 | R5 | Penundaan oleh guardian jahat | Terbatas `jumlah_guardian × (interval + grace)`. Jika ingin lebih ketat: veto butuh threshold guardian. |
 | R6 | Toolchain legacy | Anchor 0.30.x menghasilkan SBPF v0. Agave 4.3 sudah memuat feature gate SIMD-0500 (menonaktifkan deploy SBPF v0–v2) yang **belum aktif** di devnet/mainnet per 30 Sep 2026; deploy devnet 1 Okt 2026 berhasil. Gate itu memblokir deploy/upgrade baru, bukan eksekusi program yang sudah ada — tetapi setelah aktif, perbaikan bug butuh build SBPF v3. Setelah hackathon, migrasi ke Anchor 1.x (SBPF v3). |
-| R7 | Rent tidak bisa ditarik kembali | Tidak ada instruksi `close`; rent ~0,005 SOL per kapsul terkunci. Tambahkan `close` pasca-`Claimed` jika diperlukan. |
+| R7 | Rent tidak bisa ditarik kembali | Tidak ada instruksi `close`; rent ~0,004–0,005 SOL per kapsul terkunci (0,0039 SOL di devnet untuk akun 637 byte, 3 Okt 2026). Tambahkan `close` pasca-`Claimed` jika diperlukan. |
 | R8 | Pemilik tidak sadar ada trigger | Pemilik perlu notifikasi off-chain (watcher event `ClaimTriggered`) agar sempat heartbeat selama grace period. |
 | R9 | Phishing tanda tangan kunci liveness / inbox | `deriveLivenessSecret()` (SDK) menurunkan `x` dari tanda tangan wallet atas `KEYGEN_MESSAGE`. Situs phishing yang mendapat tanda tangan yang sama bisa memalsukan heartbeat (menahan pewarisan), walau tidak bisa membuka rahasia. Mitigasi: ikat origin/domain aplikasi ke pesan (gaya Sign-In With Solana) atau pakai `generateLivenessSecret()` acak yang disimpan terenkripsi. Hal yang sama berlaku untuk `INBOX_MESSAGE`: tanda tangan yang dicuri membuka share milik pemegang itu saja (< k). |
 | R10 | Bukan post-quantum | X25519 (HPKE) dan Ed25519 tidak tahan komputer kuantum. Kit sengaja tidak ditaruh di storage publik permanen (hanya hash yang on-chain) sehingga tidak bisa di-*harvest now, decrypt later* secara massal. Roadmap: KEM hibrida X-Wing (ML-KEM-768 + X25519) begitu HPKE-nya terstandar; format kit sudah berversi. |
@@ -338,17 +340,19 @@ dengan service ini sebagai satu-satunya fee payer.
 | Hanya transaksi legacy dengan fee payer = relayer, **tepat satu** instruksi, program = SIKRIT, discriminator dikenal (sama dengan SDK) | Relayer dipakai sebagai fee payer serba guna; instruksi kedua yang menumpang | *refuses every transaction…*, *knows the same instructions as the SDK…* |
 | Kunci relayer hanya boleh muncul di akun instruksi sebagai `payer` (slot 1) `create_capsule` | Tanda tangan relayer mengotorisasi hal lain: `SystemProgram.transfer` dari relayer (pengurasan), relayer sebagai guardian | *refuses every transaction…* (transfer System, relayer-sebagai-guardian) |
 | Semua tanda tangan lain diverifikasi sebelum kirim; preflight aktif | Membakar fee lewat transaksi yang pasti gagal | *refuses…* (co-signature hilang), *hands program errors back…* (422 + log, app tetap bisa menamai error) |
+| Jumlah akun persis milik instruksinya dan paling banyak 1–2 tanda tangan (sejak SIK-21, §10) | Relayer membayar tanda tangan signer sekali pakai yang ditempelkan ke instruksi (fee 5.000 lamport per tanda tangan) | *refuses every transaction…* (heartbeat + 8 signer, konfirmasi + 1 signer, heartbeat yang meminta tanda tangan kedua) |
 | Batas per klien: 10 transaksi/menit, 6 kapsul baru/jam (memori per instance; peta klien dipangkas) | Pengurasan rent lewat spam `create_capsule` dari satu alamat | *rate-limits each client…* |
 | Kunci hanya di env server (`RELAYER_SECRET_KEY`, bukan `VITE_`), tidak pernah ke browser; bundle produksi dicek bebas kode relay | Kebocoran kunci lewat bundle | pemeriksaan bundle `dist/` |
 | Saldo di bawah 0,01 SOL → 503 berisi alamat relayer | Kegagalan bisu saat relayer habis | *rate-limits…* (relayer tanpa saldo) |
 
-Hasil: tidak ada temuan pada kode yang dirilis. (Satu penguatan sebelum rilis: peta rate-limit semula hanya dipangkas
-per klien, sehingga banyak alamat berbeda bisa membuatnya tumbuh tanpa batas di instance yang hidup lama.) Risiko yang
-tersisa dicatat sebagai R18.
+Hasil review 1 Okt: tidak ada temuan pada kode yang dirilis. (Satu penguatan sebelum rilis: peta rate-limit semula hanya
+dipangkas per klien, sehingga banyak alamat berbeda bisa membuatnya tumbuh tanpa batas di instance yang hidup lama.)
+Re-audit 3 Okt menemukan satu yang terlewat: fee per tanda tangan (SIK-21, §10). Risiko yang tersisa dicatat sebagai
+R18.
 
 | # | Risiko | Detail & mitigasi |
 |---|---|---|
-| R18 | Relayer = titik pengamatan & pembayaran | (a) Operator relayer melihat IP dan waktu setiap heartbeat beserta kapsulnya, eksposur yang sama dengan node RPC bila browser mengirim langsung, tapi kini terkumpul di satu operator. Mitigasi: jalankan relayer sendiri (handler mandiri, ±200 baris), Tor/VPN, roadmap beberapa relayer. (b) Penyerang dengan banyak IP bisa menguras rent relayer devnet (~0,0037 SOL per kapsul); dampaknya demo berhenti sampai diisi ulang, tanpa dana pengguna yang berisiko. Mainnet: rent dibayar pembuat kapsul lewat voucher prabayar / burner, atau dikembalikan lewat `close` (R7). (c) Di luar Vercel, `x-forwarded-for` bisa dipalsukan untuk mengakali batas per klien. |
+| R18 | Relayer = titik pengamatan & pembayaran | (a) Operator relayer melihat IP dan waktu setiap heartbeat beserta kapsulnya, eksposur yang sama dengan node RPC bila browser mengirim langsung, tapi kini terkumpul di satu operator. Mitigasi: jalankan relayer sendiri (handler mandiri, ±200 baris), Tor/VPN, roadmap beberapa relayer. (b) Penyerang dengan banyak IP bisa menguras rent relayer devnet (~0,0039 SOL per kapsul 637 byte; fee per transaksi paling banyak dua tanda tangan sejak SIK-21); dampaknya demo berhenti sampai diisi ulang, tanpa dana pengguna yang berisiko. Mainnet: rent dibayar pembuat kapsul lewat voucher prabayar / burner, atau dikembalikan lewat `close` (R7). (c) Di luar Vercel, `x-forwarded-for` bisa dipalsukan untuk mengakali batas per klien. |
 
 ---
 
@@ -359,7 +363,7 @@ npm run build                # anchor build: SBF + IDL (Solana 1.18.17, Anchor C
 npm run test:rust            # 12 unit test: verifier Schnorr, komitmen anggota, validasi config, vektor lintas bahasa
 npm test                     # 73 test: lifecycle di LiteSVM + SDK + client + relayer service (Node 24 LTS)
 npm run typecheck
-cd app && npm run e2e        # E2E Chrome: seluruh cerita warisan + cek privasi on-chain (SIK-16, SIK-19)
+cd app && npm run e2e        # E2E Chrome: seluruh cerita warisan + cek privasi on-chain (SIK-16, SIK-19, SIK-22)
 cd app && npm run e2e:devnet # cerita yang sama lewat bundle produksi + relayer service melawan devnet (SIK-18, §7)
 RELAYER=browser npm run e2e:devnet  # sama, dengan relayer in-browser (fallback GitHub Pages)
 ```
@@ -436,3 +440,65 @@ bahasa baru (Rust).
   tidak berubah.
 - Biaya: `heartbeat` +~430 CU (cek masa berlaku, context 16 byte), `guardian_confirm`/`veto`/`claim` +~600–1.000 CU
   (SHA-256 syscall). Semua tetap jauh di bawah budget default.
+
+---
+
+## 10. Re-audit Independen Kode v2 (3 Okt 2026)
+
+Cakupan: semua kode yang berubah sejak protokol v2 (commit `fa83c2a`) dan dipakai di devnet: program (komitmen anggota,
+`guardian_bit`, masa berlaku bukti), SDK (`liveness.ts`, kit v2, `client.ts`), app (discovery dari kit, alur
+create/claim/release) dan relayer service. Metode: review manual baris per baris dengan satu pertanyaan per aset
+(*siapa yang bisa memanggil ini, dengan data apa, di status apa, dan apa yang terjadi bila jaringan gagal di tengah
+jalan*), lalu setiap temuan dibuktikan dulu dengan test yang merah sebelum diperbaiki.
+
+### SIK-21 🔵 Relayer membayar tanda tangan tambahan (CWE-405: Asymmetric Resource Consumption)
+
+**Masalah:** kebijakan relayer memeriksa fee payer, satu instruksi SIKRIT, discriminator, dan posisi kunci relayer,
+tetapi tidak jumlah akun instruksi. Anchor mengabaikan akun tambahan, sedangkan fee Solana 5.000 lamport **per tanda
+tangan** dibayar fee payer. Siapa pun yang punya kapsul sendiri bisa menempelkan akun signer sekali pakai ke
+heartbeat-nya; transaksi itu lolos preflight karena program menerimanya. Dibuktikan dengan binary program asli di
+LiteSVM: heartbeat dengan 8 signer tambahan diterima relayer (HTTP 200) dan relayer membayar **45.000 lamport** alih-alih
+5.000. Dengan batas 10 transaksi/menit per alamat, satu klien menguras saldo relayer devnet 9× lebih cepat. Dampak:
+demo hosted berhenti sampai relayer diisi ulang (R18b); tidak ada dana atau data pengguna yang terancam.
+**Perbaikan:** `RELAYED` mencatat jumlah akun persis setiap instruksi (`create_capsule` 3, `heartbeat`/`trigger_claim` 1,
+`guardian_confirm`/`guardian_veto`/`claim` 2) dan batas tanda tangannya (1 atau 2); `refusal()` menolak selain itu
+sebelum menandatangani. Fee satu transaksi relay kini paling banyak 2 × 5.000 lamport.
+**Test:** *refuses every transaction that could spend its SOL on anything else*, dengan tiga kasus baru: heartbeat
+ditempeli 8 signer, konfirmasi ditempeli 1 signer, heartbeat yang meminta tanda tangan kedua. Saldo relayer tidak
+berubah.
+
+### SIK-22 🟡 Konfirmasi registrasi yang hilang membuang kit (CWE-755: Improper Handling of Exceptional Conditions)
+
+**Masalah:** wizard menyimpan kit, satu-satunya salinan salt anggota dan share terenkripsi, hanya **setelah**
+`create_capsule` terkonfirmasi. Konfirmasi bisa gagal padahal transaksinya sudah mendarat: function relayer kena timeout
+setelah broadcast (batas waktu function serverless), koneksi putus, RPC publik membalas 429, atau tab ditutup.
+Akibatnya kapsul ada on-chain (share hash dan komitmen keluarga) tanpa kit: pemilik tidak bisa memberikannya kepada
+keluarga, guardian tidak punya share untuk di-release, dan karena alamat kapsul diturunkan deterministik dari wallet
+pemilik tanpa instruksi update/close (R7), wallet itu tidak bisa mendaftarkan kapsul lain. Dibuktikan E2E: bila balasan
+registrasi dibuang setelah transaksinya terkirim, dashboard menampilkan kapsul *Alive* dengan pesan *"No copy of the kit
+in this browser"*, padahal pemilik tidak pernah mengunduh apa pun.
+**Perbaikan:** kit disimpan sebagai *pending* sebelum broadcast (`postPendingKit`, paling banyak 5 percobaan terakhir)
+dan dipindah ke mailbox setelah terkonfirmasi. Bila konfirmasi gagal, app membaca ulang kapsul, dan dashboard
+mengadopsi kit pending yang cocok dengan chain (`useAdoptPendingKit` → `verifyKit`; share hash dan salt baru di setiap
+sealing, jadi tepat satu percobaan yang bisa cocok). Sebelum broadcast, wizard memastikan kapsul belum ada, sehingga
+percobaan ulang tidak mendaftar dua kali.
+**Test:** E2E browser (`cd app && npm run e2e`) kini secara default meneruskan transaksi registrasi ke chain lalu membuang
+balasannya, baik di relayer service maupun di `sendTransaction` RPC untuk relayer in-browser, dan menuntut dashboard
+memegang kit sebelum seluruh cerita warisan berjalan. Merah sebelum perbaikan (timeout menunggu *"Delivered to the
+family's inboxes"*), hijau sesudahnya: 134 s (relayer service), 135 s (relayer in-browser), jalur normal
+`LOSE_CONFIRMATION=0` 136 s.
+
+### Diperiksa tanpa temuan
+
+- **Program.** Pembukaan komitmen terikat ke signer, jadi salt yang terlihat di transaksi seorang anggota tidak berguna
+  bagi orang lain. `guardian_bit` menolak slot di luar vektor sebelum shift. Batas waktu konsisten: veto `< grace`,
+  klaim `≥ grace`, masa berlaku bukti inklusif di kedua ujung. Nonce dan `expires_at` ada di transkrip. Akun hanya lewat
+  `Account<Capsule>` + seeds/bump, dan tidak ada jalan keluar dari `Claimed`.
+- **SDK.** Encoding Borsh `CapsuleConfig` sama dengan layout Rust (dikunci vektor). `memberCommitment` memvalidasi
+  panjang input. `verifyKit` memeriksa commitment, share hash, roster berurutan dan sertifikat. `releaseShare` menolak
+  ahli waris yang dilaporkan RPC bila berbeda dengan yang dikomit. Salt hanya dipakai untuk komitmen, jadi terbukanya
+  salt saat bertindak tidak membocorkan apa pun. `decodeKit` ketat.
+- **App.** Konfirmasi, veto dan klaim hanya memakai salt dari kit yang lolos `verifyKit` terhadap chain. Kapsul anggota
+  ditemukan dari kit, tanpa query berdasarkan wallet. Tidak ada sink HTML mentah baru.
+- **Relayer.** Sesudah SIK-21, setiap tanda tangan relayer membayar tepat satu instruksi SIKRIT dengan akun persis milik
+  instruksi itu, dan paling banyak dua tanda tangan.

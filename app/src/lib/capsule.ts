@@ -111,6 +111,35 @@ export function useVerifiedKit(address: PublicKey, capsule: CapsuleAccount) {
   return { kitText, checked, importKit };
 }
 
+/**
+ * The owner's side of SIK-22: sealing files the kit as pending before the registration is broadcast. If the app never
+ * heard that the transaction landed, the capsule exists without a filed kit; adopt the pending kit that matches it
+ * on-chain (share hashes and salts are fresh per seal, so exactly one attempt can match).
+ */
+export function useAdoptPendingKit(address: PublicKey, capsule: CapsuleAccount): void {
+  const mailbox = useMailbox();
+  const addressText = address.toBase58();
+  const filed = mailbox.kits[addressText];
+  const pending = mailbox.pending[addressText];
+
+  useEffect(() => {
+    if (!pending?.length) return;
+    const state = chainState(capsule);
+    const matches = (text: string | undefined) => {
+      if (!text) return false;
+      try {
+        kit.verifyKit(kit.decodeKit(text), state);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    if (matches(filed)) return;
+    const adopted = pending.find(matches);
+    if (adopted) postKit(addressText, adopted);
+  }, [addressText, capsule, filed, pending]);
+}
+
 /** "Sari" for demo personas, the short address otherwise. */
 export function who(address: PublicKey | Uint8Array): string {
   const key = address instanceof PublicKey ? address : new PublicKey(address);

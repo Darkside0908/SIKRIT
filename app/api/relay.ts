@@ -7,8 +7,9 @@
  *   GET  /api/relay   → { relayer }                          the fee payer to build transactions with
  *   POST /api/relay   { transaction } (base64, co-signed)    → { signature } | { error, logs? }
  *
- * It signs only transactions made of exactly one SIKRIT instruction, and appears in that instruction only as the
- * rent payer of `create_capsule`, so its signature can never move its SOL anywhere else.
+ * It signs only transactions made of exactly one SIKRIT instruction with exactly that instruction's accounts, and
+ * appears in it only as the rent payer of `create_capsule`, so its signature can never move its SOL anywhere else nor
+ * pay for more signatures than the instruction needs.
  *
  * Vercel deploys this file as a serverless function; `vite dev` and `vite preview` mount the same handler (see
  * vite.config.ts). Configuration (server-side only, never `VITE_`-prefixed):
@@ -26,14 +27,19 @@ export const PROGRAM_ID = new PublicKey("FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9B
 
 const discriminator = (name: string) => createHash("sha256").update(`global:${name}`).digest().subarray(0, 8);
 
-/** The instructions the relayer pays for, and the account slots (if any) where it may appear in them. */
+/**
+ * The instructions the relayer pays for: how many accounts each takes, the slots (if any) where the relayer may appear,
+ * and how many signatures its transaction may carry. The fee is 5 000 lamports per signature and the program ignores
+ * extra accounts, so without the exact account count anyone could pad a heartbeat with throwaway signers and make the
+ * relayer pay up to ten fees for it.
+ */
 export const RELAYED = [
-  { name: "create_capsule", relayerSlots: [1] }, // payer of the new capsule's rent
-  { name: "heartbeat", relayerSlots: [] },
-  { name: "trigger_claim", relayerSlots: [] },
-  { name: "guardian_confirm", relayerSlots: [] },
-  { name: "guardian_veto", relayerSlots: [] },
-  { name: "claim", relayerSlots: [] },
+  { name: "create_capsule", accounts: 3, signatures: 2, relayerSlots: [1] }, // payer of the new capsule's rent
+  { name: "heartbeat", accounts: 1, signatures: 1, relayerSlots: [] },
+  { name: "trigger_claim", accounts: 1, signatures: 1, relayerSlots: [] },
+  { name: "guardian_confirm", accounts: 2, signatures: 2, relayerSlots: [] },
+  { name: "guardian_veto", accounts: 2, signatures: 2, relayerSlots: [] },
+  { name: "claim", accounts: 2, signatures: 2, relayerSlots: [] },
 ].map((entry) => ({ ...entry, discriminator: discriminator(entry.name) }));
 
 /** Why the relayer refuses to sign `tx`, or undefined when it may. */
@@ -44,6 +50,8 @@ export function refusal(tx: Transaction, relayer: PublicKey, programId = PROGRAM
   if (!ix.programId.equals(programId)) return "only SIKRIT instructions are relayed";
   const kind = RELAYED.find((entry) => ix.data.length >= 8 && entry.discriminator.equals(ix.data.subarray(0, 8)));
   if (!kind) return "unknown SIKRIT instruction";
+  if (ix.keys.length !== kind.accounts) return `${kind.name} takes exactly ${kind.accounts} account${kind.accounts > 1 ? "s" : ""}`;
+  if (tx.signatures.length > kind.signatures) return "too many signatures: each one is another fee";
   const slots = ix.keys.flatMap(({ pubkey }, slot) => (pubkey.equals(relayer) ? [slot] : []));
   if (slots.some((slot) => !kind.relayerSlots.includes(slot))) {
     return "the relayer signs only as fee payer and as a new capsule's rent payer";

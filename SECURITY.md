@@ -21,7 +21,7 @@ you'd rather stay anonymous. There is no bug bounty.
 ## Before you report
 
 Read the self-audit first: [docs/SECURITY-REVIEW.en.md](docs/SECURITY-REVIEW.en.md) (full Indonesian edition:
-[docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md)). It lists every finding so far (SIK-01 to SIK-20) and the residual
+[docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md)). It lists every finding so far (SIK-01 to SIK-22) and the residual
 risks we accept and publish (R1 to R18): heartbeat times are public, each family member is visible when they act,
 guardians trust their RPC, enough colluding guardians can open a kit, the upgrade authority on devnet is a single key,
 and more. A report that shows one of those is worse than we wrote is very welcome.

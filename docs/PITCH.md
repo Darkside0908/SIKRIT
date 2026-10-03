@@ -96,7 +96,7 @@ kripto", atau bahwa waktu heartbeat tersembunyi (tidak).
 | Keluarga tidak on-chain sebelum bertindak | E2E yang sama: Sari (ahli waris) hanya muncul di transaksi klaimnya, Budi & Dewi hanya di konfirmasi masing-masing, Rizal (guardian yang tidak bertindak) di **0**; akun kapsul hanya memuat komitmen sampai klaim |
 | Murah | Verifikasi heartbeat **41.444 CU** (diukur di devnet, termasuk cek masa berlaku); fee 5.000 lamport. Heartbeat mingguan 30 tahun ≈ **0,0078 SOL** |
 | Kriptografi benar | Transkrip Fiat–Shamir dikunci *known-answer vector* lintas bahasa (TS ↔ Rust); HPKE lolos vektor resmi RFC 9180; Shamir pakai library teraudit (Cure53 + Zellic) |
-| Aman | Self-audit 20 temuan (`docs/SECURITY-REVIEW.md`, program + SDK + app + relayer): replay, double-vote guardian, veto DoS, swap kunci inbox, roster keluarga yang menunjuk ke pemilik, bukti heartbeat tanpa masa berlaku, dst. — semua High/Critical sudah diperbaiki dan dites |
+| Aman | Self-audit 22 temuan (`docs/SECURITY-REVIEW.md`, program + SDK + app + relayer): replay, double-vote guardian, veto DoS, swap kunci inbox, roster keluarga yang menunjuk ke pemilik, bukti heartbeat tanpa masa berlaku, dst. — semua High/Critical sudah diperbaiki dan dites |
 | Bekerja end-to-end | 73 test (LiteSVM + SDK + client + relayer) + 12 unit test Rust + E2E browser 12 langkah, di validator lokal **dan di devnet**: seed phrase pulih identik di browser ahli waris |
 
 ## 6. Bisnis & go-to-market *(rencana; belum ada pendapatan)*

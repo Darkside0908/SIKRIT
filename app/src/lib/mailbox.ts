@@ -12,11 +12,13 @@ interface Mailbox {
   releases: Record<string, string[]>;
   /** The release each guardian sent, keyed `${capsule}:${guardian wallet}` (their outbox). */
   sent: Record<string, string>;
+  /** Kits the owner sealed for a capsule whose registration was broadcast but not (yet) confirmed, newest last. */
+  pending: Record<string, string[]>;
 }
 
 const KEY = "sikrit:mailbox:v1";
 const EVENT = "sikrit:mailbox";
-const empty = (): Mailbox => ({ invites: {}, kits: {}, releases: {}, sent: {} });
+const empty = (): Mailbox => ({ invites: {}, kits: {}, releases: {}, sent: {}, pending: {} });
 
 let cachedRaw: string | null = null;
 let cached: Mailbox = empty();
@@ -50,7 +52,18 @@ export const useMailbox = (): Mailbox => useSyncExternalStore(subscribe, read);
 
 export const postInvite = (wallet: string, invite: string) => write((box) => void (box.invites[wallet] = invite));
 
-export const postKit = (capsule: string, kit: string) => write((box) => void (box.kits[capsule] = kit));
+export const postKit = (capsule: string, kit: string) =>
+  write((box) => {
+    box.kits[capsule] = kit;
+    delete box.pending[capsule];
+  });
+
+/**
+ * Files a sealed kit before its registration is broadcast. A confirmation can fail after the transaction landed (a
+ * relayer timeout, a dropped connection); the capsule then exists, and only this copy of its kit does (SIK-22).
+ */
+export const postPendingKit = (capsule: string, kit: string) =>
+  write((box) => void (box.pending[capsule] = [...(box.pending[capsule] ?? []), kit].slice(-5)));
 
 export const postRelease = (capsule: string, guardian: string, release: string) =>
   write((box) => {

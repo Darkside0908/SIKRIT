@@ -1,4 +1,4 @@
-import { CapsuleAccount, PROGRAM_ID, createCapsuleIx, heartbeatIx, timeline } from "@sdk/client";
+import { CapsuleAccount, PROGRAM_ID, createCapsuleIx, fetchCapsule, heartbeatIx, timeline } from "@sdk/client";
 import * as kit from "@sdk/kit";
 import * as liveness from "@sdk/liveness";
 import { PublicKey } from "@solana/web3.js";
@@ -10,13 +10,13 @@ import { ActionButton, Copyable, Field, Heading, Notice, Stat, StatusChip } from
 import { Countdown, Ecg, Seal, Vital } from "../components/visuals";
 import { CLUSTER } from "../config";
 import { Actor, CAST, personaActor } from "../lib/actors";
-import { useMailboxKit, who } from "../lib/capsule";
-import { SentTransaction, readChainTime, sendWithRelayer } from "../lib/chain";
+import { useAdoptPendingKit, useMailboxKit, who } from "../lib/capsule";
+import { SentTransaction, connection, readChainTime, sendWithRelayer } from "../lib/chain";
 import { getRelayer, sendRelayed, useRelayer } from "../lib/relayer";
 import { duration, hex, short, when } from "../lib/format";
 import { useAction, useCapsule, useChainNow } from "../lib/hooks";
 import { useActor } from "../lib/identity";
-import { download, postInvite, postKit, useMailbox } from "../lib/mailbox";
+import { download, postInvite, postKit, postPendingKit, useMailbox } from "../lib/mailbox";
 
 const SAMPLE_SEED = "abandon ability able about above absent absorb abstract absurd abuse access accident";
 
@@ -74,6 +74,7 @@ export function OwnerPage() {
             setSent(created);
             refresh();
           }}
+          onFailed={refresh}
         />
       ) : (
         <Dashboard actor={actor!} secret={secret} address={address!} capsule={capsule} sent={sent} onSent={setSent} />
@@ -136,12 +137,15 @@ function CreateWizard({
   commitment,
   address,
   onCreated,
+  onFailed,
 }: {
   actor: Actor;
   secret: bigint;
   commitment: Uint8Array;
   address: PublicKey;
   onCreated: (sent: SentTransaction) => void;
+  /** Re-reads the capsule: a registration whose confirmation failed may have landed anyway. */
+  onFailed: () => void;
 }) {
   const mailbox = useMailbox();
   const action = useAction();
@@ -178,6 +182,8 @@ function CreateWizard({
 
   const seal = () =>
     action.run("Sealing", async () => {
+      // An earlier attempt may have landed although the app never heard back: never register twice.
+      if (await fetchCapsule(connection, address)) return onFailed();
       // The heir's share plus `quorum` guardian shares reconstruct: the cryptographic threshold
       // mirrors the guardian quorum the program enforces.
       const sealed = await kit.sealCapsuleKit({
@@ -201,10 +207,19 @@ function CreateWizard({
       // The relayer also pays the new capsule's rent (~0.004 SOL), hence the larger top-up for a browser relayer.
       const relayer = await getRelayer();
       await relayer.ready(0.05);
-      const sent = await sendWithRelayer([createCapsuleIx({ payer: relayer.publicKey, commitment, config, proof })], relayer);
-      postKit(address.toBase58(), kit.encodeKit(sealed));
-      setPlaintext("");
-      onCreated(sent);
+      // Filed before broadcasting (SIK-22): if the confirmation is lost although the transaction landed, the
+      // dashboard adopts this kit, so a registered capsule never ends up without one.
+      const text = kit.encodeKit(sealed);
+      postPendingKit(address.toBase58(), text);
+      try {
+        const sent = await sendWithRelayer([createCapsuleIx({ payer: relayer.publicKey, commitment, config, proof })], relayer);
+        postKit(address.toBase58(), text);
+        setPlaintext("");
+        onCreated(sent);
+      } catch (error) {
+        onFailed();
+        throw error;
+      }
     });
 
   const knownInvites = Object.entries(mailbox.invites);
@@ -392,6 +407,7 @@ function Dashboard({
   const action = useAction();
   const mailbox = useMailbox();
   const ownKit = useMailboxKit(address);
+  useAdoptPendingKit(address, capsule);
   const [beats, setBeats] = useState(0);
   const relayer = useRelayer();
   const t = now !== undefined ? timeline(capsule, now) : undefined;
