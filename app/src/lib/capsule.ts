@@ -86,12 +86,16 @@ export function useVerifiedKit(address: PublicKey, capsule: CapsuleAccount) {
 
   const checked = useMemo((): { kit?: kit.CapsuleKit; error?: string } => {
     if (!kitText) return {};
+    let parsed: kit.CapsuleKit | undefined;
     try {
-      const parsed = kit.decodeKit(kitText);
+      parsed = kit.decodeKit(kitText);
       kit.verifyKit(parsed, chainState(capsule));
       return { kit: parsed };
     } catch (e) {
-      return { error: (e as Error).message.replace(/^kit: /, "") };
+      // This capsule, but other shares or holders: the owner re-sealed it (update_capsule) after this kit was made.
+      const reSealed = parsed?.commitment.every((byte, i) => byte === capsule.commitment[i]);
+      const reason = (e as Error).message.replace(/^kit: /, "");
+      return { error: reSealed ? `out of date (${reason}): the owner has re-sealed this capsule since. Ask them for the new kit.` : reason };
     }
   }, [kitText, capsule]);
 

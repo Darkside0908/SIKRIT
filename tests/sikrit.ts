@@ -243,6 +243,27 @@ class Harness {
     return this.send(await this.heartbeatIx(capsule, opts.beat), [opts.relayer ?? this.wallet()]);
   }
 
+  /** `update_capsule` to `config`, proven for the capsule's current nonce unless `beat` carries another proof. */
+  async updateIx(capsule: Capsule, config: liveness.CapsuleConfigInput, beat?: Beat): Promise<TransactionInstruction> {
+    const nonce = BigInt(this.capsule(capsule.address).heartbeatNonce.toString());
+    const expiresAt = beat?.expiresAt ?? this.now() + liveness.DEFAULT_PROOF_LIFETIME;
+    const proof = beat?.proof ?? liveness.proveUpdate(capsule.secret, PROGRAM_ID, capsule.address, nonce, expiresAt, config);
+    return this.program.methods
+      .updateCapsule(toAnchorConfig(config), proof, new BN(expiresAt.toString()))
+      .accountsStrict({ capsule: capsule.address })
+      .instruction();
+  }
+
+  async update(capsule: Capsule, config: liveness.CapsuleConfigInput, beat?: Beat): Promise<TxResult> {
+    return this.send(await this.updateIx(capsule, config, beat), [this.wallet()]);
+  }
+
+  /** A new roster and rules for `capsule` (fresh wallets and salts), and the capsule as its new members see it. */
+  rekeyed(capsule: Capsule, opts: CapsuleOptions = {}): { config: liveness.CapsuleConfigInput; capsule: Capsule } {
+    const { config, heir, guardians, heirSalt, guardianSalts } = this.sampleConfig(opts, capsule.commitment);
+    return { config, capsule: { ...capsule, heir, guardians, heirSalt, guardianSalts, config } };
+  }
+
   /** The guardian's own opening (slot + salt from the kit); a wallet that is no guardian borrows slot 0's. */
   opening(capsule: Capsule, guardian: Keypair): { slot: number; salt: Uint8Array } {
     const slot = capsule.guardians.findIndex((g) => g.publicKey.equals(guardian.publicKey));
@@ -385,6 +406,29 @@ describe("SIKRIT — privacy-preserving dead man's switch", () => {
       );
     });
 
+    it("reproduces the update known-answer vector verified by the Rust unit tests", () => {
+      const x = liveness.bytesToNumberLE(
+        hexToBytes("cc06ce634561e95bfc9b213fde6df570604f9e98e971825808f84ddcac1ffc00"),
+      );
+      const fill = (byte: number) => new Uint8Array(32).fill(byte);
+      const config: liveness.CapsuleConfigInput = {
+        heirCommitment: fill(0x44),
+        heartbeatInterval: 60n,
+        gracePeriod: 120n,
+        guardianCommitments: [fill(0x55), fill(0x66)],
+        guardianThreshold: 1,
+        shareHashes: [fill(0x77), fill(0x88), fill(0x99)],
+      };
+      const [programId, capsule] = [new PublicKey(fill(0x11)), new PublicKey(fill(0x22))];
+      const proof = liveness.proveUpdate(x, programId, capsule, 7n, 1_790_000_600n, config, new Uint8Array(32));
+      expect(bytesToHex(Uint8Array.from(proof.r))).to.equal("6da114eef0357c0097840bb0b0a3017eb156aa0291eff6b050dd97678cdccda8");
+      expect(bytesToHex(Uint8Array.from(proof.s))).to.equal("c6b4e426c112793392968595d48ee21ad20561565e430b333512661f6b59a303");
+      const P = liveness.commitmentFromSecret(x);
+      const context = liveness.updateContext(7n, 1_790_000_600n, config);
+      expect(liveness.verifyProof(programId, liveness.UPDATE_DOMAIN, capsule, P, proof, context)).to.equal(true);
+      expect(liveness.verifyProof(programId, liveness.LIVENESS_DOMAIN, capsule, P, proof, context)).to.equal(false);
+    });
+
     it("computes member commitments like the program (vector shared with the Rust tests, checked in Python)", () => {
       const [p, wallet, salt] = [0x33, 0x44, 0x55].map((byte) => new Uint8Array(32).fill(byte));
       expect(bytesToHex(liveness.memberCommitment(p, GUARDIAN, wallet, salt))).to.equal(
@@ -408,6 +452,7 @@ describe("SIKRIT — privacy-preserving dead man's switch", () => {
       expect(constant("CAPSULE_SEED")).to.deep.equal(Array.from(liveness.CAPSULE_SEED));
       expect(constant("REGISTER_DOMAIN")).to.deep.equal(Array.from(liveness.REGISTER_DOMAIN));
       expect(constant("LIVENESS_DOMAIN")).to.deep.equal(Array.from(liveness.LIVENESS_DOMAIN));
+      expect(constant("UPDATE_DOMAIN")).to.deep.equal(Array.from(liveness.UPDATE_DOMAIN));
       expect(constant("MEMBER_DOMAIN")).to.deep.equal(Array.from(liveness.MEMBER_DOMAIN));
       expect(BigInt(idl.constants.find((c) => c.name === "MAX_PROOF_LIFETIME")!.value)).to.equal(liveness.MAX_PROOF_LIFETIME);
       expect(liveness.DEFAULT_PROOF_LIFETIME < liveness.MAX_PROOF_LIFETIME).to.equal(true);
@@ -429,6 +474,7 @@ describe("SIKRIT — privacy-preserving dead man's switch", () => {
       const expected: Record<string, keyof typeof client.DISCRIMINATORS> = {
         create_capsule: "createCapsule",
         heartbeat: "heartbeat",
+        update_capsule: "updateCapsule",
         trigger_claim: "triggerClaim",
         guardian_confirm: "guardianConfirm",
         guardian_veto: "guardianVeto",
@@ -463,6 +509,10 @@ describe("SIKRIT — privacy-preserving dead man's switch", () => {
         [
           client.heartbeatIx({ capsule: capsule.address, proof, expiresAt }),
           await h.program.methods.heartbeat(proof, new BN(expiresAt.toString())).accountsStrict({ capsule: capsule.address }).instruction(),
+        ],
+        [
+          client.updateCapsuleIx({ capsule: capsule.address, config: capsule.config, proof, expiresAt }),
+          await h.updateIx(capsule, capsule.config, { proof, expiresAt }),
         ],
         [
           client.triggerClaimIx({ capsule: capsule.address }),
@@ -639,7 +689,7 @@ describe("SIKRIT — privacy-preserving dead man's switch", () => {
       };
       const proof = liveness.proveRegistration(secret, PROGRAM_ID, address, config);
       const confirm = (slot: number) => client.guardianConfirmIx({ capsule: address, guardian: guardians[slot], slot, salt: salts[slot] });
-      return { secret, address, heirSalt, confirm, ix: client.createCapsuleIx({ payer, commitment, config, proof }) };
+      return { secret, address, heirSalt, config, confirm, ix: client.createCapsuleIx({ payer, commitment, config, proof }) };
     };
     const beatIx = (capsule: { secret: bigint; address: PublicKey }, nonce = 0n) => {
       const expiresAt = h.now() + liveness.DEFAULT_PROOF_LIFETIME;
@@ -659,10 +709,15 @@ describe("SIKRIT — privacy-preserving dead man's switch", () => {
 
       await ok(posted([capsule.ix], relayer.publicKey));
       await ok(posted([beatIx(capsule)], relayer.publicKey));
+      // The owner tightens the rules (same family, guardian quorum 1, new share hashes), still without a wallet.
+      const rules = { ...capsule.config, gracePeriod: 61n, shareHashes: [sha256(utf8ToBytes("re-sealed"))] };
+      const expiresAt = h.now() + liveness.DEFAULT_PROOF_LIFETIME;
+      const update = liveness.proveUpdate(capsule.secret, PROGRAM_ID, capsule.address, 1n, expiresAt, rules);
+      await ok(posted([client.updateCapsuleIx({ capsule: capsule.address, config: rules, proof: update, expiresAt })], relayer.publicKey));
       h.warp(60);
       await ok(posted([client.triggerClaimIx({ capsule: capsule.address })], relayer.publicKey));
       await ok(posted([capsule.confirm(0)], relayer.publicKey, [guardian]));
-      h.warp(60);
+      h.warp(61);
       await ok(posted([client.claimIx({ capsule: capsule.address, heir: heir.publicKey, salt: capsule.heirSalt })], relayer.publicKey, [heir]));
 
       expect(client.decodeCapsule(Uint8Array.from(h.svm.getAccount(capsule.address)!.data)).status).to.equal("claimed");
@@ -748,7 +803,7 @@ describe("SIKRIT — privacy-preserving dead man's switch", () => {
 
     it("knows the same instructions as the SDK and serves Vercel and plain Node requests alike", async () => {
       const names: Record<string, keyof typeof client.DISCRIMINATORS> = {
-        create_capsule: "createCapsule", heartbeat: "heartbeat", trigger_claim: "triggerClaim",
+        create_capsule: "createCapsule", heartbeat: "heartbeat", update_capsule: "updateCapsule", trigger_claim: "triggerClaim",
         guardian_confirm: "guardianConfirm", guardian_veto: "guardianVeto", claim: "claim",
       };
       for (const { name, discriminator } of relayService.RELAYED) {
@@ -1005,6 +1060,162 @@ describe("SIKRIT — privacy-preserving dead man's switch", () => {
 
       const badS = { ...valid, proof: { ...valid.proof, s: new Array(32).fill(0xff) } };
       expectError(await h.heartbeat(capsule, { beat: badS }), "InvalidProofS");
+    });
+  });
+
+  describe("update_capsule — the owner changes their mind", () => {
+    it("re-seals with a proof alone: new heir, guardians, quorum, timers and shares; the old roster loses its say", async () => {
+      const { capsule } = await h.newCapsule({ guardians: 3, threshold: 2 });
+      h.warp(DAY);
+      const next = h.rekeyed(capsule, {
+        guardians: 2,
+        threshold: 1,
+        interval: 90 * DAY,
+        grace: 14 * DAY,
+        shareHashes: ["a", "b", "c"].map((share) => sha256(utf8ToBytes(`new share ${share}`))),
+      });
+      const ix = await h.updateIx(capsule, next.config);
+      // Like a heartbeat: only the capsule, no signer, so any relayer can carry it and no wallet appears.
+      expect(ix.keys.map((k) => [k.pubkey.toBase58(), k.isSigner])).to.deep.equal([[capsule.address.toBase58(), false]]);
+      const tx = expectSuccess(h.send(ix, [h.wallet()]));
+
+      const state = h.capsule(capsule.address);
+      const hex = (list: number[][]) => list.map((bytes) => bytesToHex(Uint8Array.from(bytes)));
+      expect(bytesToHex(Uint8Array.from(state.heirCommitment))).to.equal(bytesToHex(next.config.heirCommitment));
+      expect(hex(state.guardianCommitments)).to.deep.equal(next.config.guardianCommitments.map(bytesToHex));
+      expect(hex(state.shareHashes)).to.deep.equal(next.config.shareHashes.map(bytesToHex));
+      expect([state.guardianThreshold, state.heartbeatInterval.toNumber(), state.gracePeriod.toNumber()]).to.deep.equal([1, 90 * DAY, 14 * DAY]);
+      expect([state.heartbeatNonce.toNumber(), state.lastHeartbeat.toString(), statusOf(state)]).to.deep.equal([1, h.now().toString(), "active"]);
+      const [event] = h.events(tx);
+      expect(event.name).to.equal("capsuleUpdated");
+      expect(event.data).to.include({ guardianCount: 2, guardianThreshold: 1, claimCancelled: false });
+      // The new members are salted commitments too: none of their wallets is in the account.
+      const raw = Buffer.from(h.svm.getAccount(capsule.address)!.data);
+      const members = [next.capsule.heir, ...next.capsule.guardians, capsule.heir, ...capsule.guardians];
+      expect(members.filter((wallet) => raw.includes(wallet.publicKey.toBuffer()))).to.deep.equal([]);
+
+      // The old roster can no longer act; the new one can.
+      h.warp(90 * DAY);
+      expectSuccess(await h.triggerClaim(capsule));
+      expectError(await h.guardianConfirm(capsule, capsule.guardians[0]), "UnauthorizedGuardian");
+      expectSuccess(await h.guardianConfirm(next.capsule, next.capsule.guardians[1]));
+      h.warp(14 * DAY);
+      expectError(await h.claim(capsule), "UnauthorizedHeir");
+      expectSuccess(await h.claim(next.capsule));
+    });
+
+    it("binds the update to the nonce, a short expiry and the whole new config", async () => {
+      const { capsule } = await h.newCapsule();
+      const next = h.rekeyed(capsule);
+      const expiresAt = h.now() + liveness.DEFAULT_PROOF_LIFETIME;
+      const proof = liveness.proveUpdate(capsule.secret, PROGRAM_ID, capsule.address, 0n, expiresAt, next.config);
+
+      // A relayer cannot swap in another roster or stretch the expiry under the owner's proof.
+      const otherHeir = { ...next.config, heirCommitment: h.rekeyed(capsule).config.heirCommitment };
+      expectError(await h.update(capsule, otherHeir, { proof, expiresAt }), "ProofVerificationFailed");
+      expectError(await h.update(capsule, next.config, { proof, expiresAt: expiresAt + 60n }), "ProofVerificationFailed");
+      // A heartbeat (same nonce and expiry) or the registration proof authorizes no update, and vice versa.
+      expectError(await h.update(capsule, next.config, h.beat(capsule, { expiresAt })), "ProofVerificationFailed");
+      expectError(await h.update(capsule, capsule.config, { proof: capsule.registrationProof, expiresAt }), "ProofVerificationFailed");
+      expectError(await h.heartbeat(capsule, { beat: { proof, expiresAt } }), "ProofVerificationFailed");
+
+      expectSuccess(await h.update(capsule, next.config, { proof, expiresAt }));
+      // Once used, the nonce has moved on: the same update cannot be replayed (e.g. to undo a later change).
+      expectError(await h.update(capsule, next.config, { proof, expiresAt }), "ProofVerificationFailed");
+
+      const at = (expiry: bigint) => ({
+        proof: liveness.proveUpdate(capsule.secret, PROGRAM_ID, capsule.address, 1n, expiry, next.config),
+        expiresAt: expiry,
+      });
+      expectError(await h.update(capsule, next.config, at(h.now() - 1n)), "ProofExpired");
+      expectError(await h.update(capsule, next.config, at(h.now() + liveness.MAX_PROOF_LIFETIME + 1n)), "ProofExpiryTooFar");
+      const forged = liveness.proveUpdate(liveness.generateLivenessSecret(), PROGRAM_ID, capsule.address, 1n, expiresAt, next.config);
+      expectError(await h.update(capsule, next.config, { proof: forged, expiresAt }), "ProofVerificationFailed");
+    });
+
+    it("proves the owner alive: an update cancels a pending claim, its approvals and spent vetoes", async () => {
+      const capsule = await h.pendingCapsule();
+      expectSuccess(await h.guardianConfirm(capsule, capsule.guardians[0]));
+      expectSuccess(await h.guardianVeto(capsule, capsule.guardians[1]));
+      h.warp(Number(capsule.config.heartbeatInterval));
+      expectSuccess(await h.triggerClaim(capsule));
+      expectSuccess(await h.guardianConfirm(capsule, capsule.guardians[0]));
+
+      const tx = expectSuccess(await h.update(capsule, h.rekeyed(capsule).config));
+      const state = h.capsule(capsule.address);
+      expect([statusOf(state), state.approvals, state.vetoes, state.claimTriggeredAt.toNumber()]).to.deep.equal(["active", 0, 0, 0]);
+      expect(h.events(tx)[0].data.claimCancelled).to.equal(true);
+    });
+
+    it("is refused after the claim, and checks the new config like create_capsule", async () => {
+      const { capsule } = await h.newCapsule();
+      for (const [opts, error] of [
+        [{ guardians: 2, threshold: 3 }, "InvalidGuardianThreshold"],
+        [{ guardians: 6 }, "TooManyGuardians"],
+        [{ interval: 59 }, "HeartbeatIntervalTooShort"],
+        [{ grace: 59 }, "GracePeriodTooShort"],
+      ] as [CapsuleOptions, string][]) {
+        expectError(await h.update(capsule, h.rekeyed(capsule, opts).config), error);
+      }
+      const doubled = h.rekeyed(capsule).config;
+      expectError(await h.update(capsule, { ...doubled, guardianCommitments: [doubled.guardianCommitments[0], doubled.guardianCommitments[0]] }), "DuplicateGuardian");
+
+      const timeLock = await h.pendingCapsule({ guardians: 0, threshold: 0 });
+      h.warp(Number(timeLock.config.gracePeriod));
+      expectSuccess(await h.claim(timeLock));
+      expectError(await h.update(timeLock, h.rekeyed(timeLock).config), "CapsuleAlreadyClaimed");
+    });
+
+    it("retires the old kit: it no longer matches the chain, so no guardian client releases from it", async () => {
+      const sign = (wallet: Keypair) => async (message: Uint8Array) => ed25519.sign(message, wallet.secretKey.slice(0, 32));
+      const [heir, ...guardians] = [h.wallet(), h.wallet(), h.wallet()];
+      const inboxes = await Promise.all([heir, ...guardians].map((wallet) => kit.createInbox(wallet.publicKey.toBytes(), sign(wallet))));
+      const certificates = inboxes.map((inbox) => inbox.certificate);
+      const secret = liveness.generateLivenessSecret();
+      const commitment = liveness.commitmentFromSecret(secret);
+      const seal = () =>
+        kit.sealCapsuleKit({ secret: utf8ToBytes("seed"), commitment, heir: certificates[0], guardians: certificates.slice(1), threshold: 2 });
+      const [before, after] = [await seal(), await seal()]; // same family, fresh key, shares and salts
+      const opts = (sealed: kit.CapsuleKit): CapsuleOptions => ({
+        secret,
+        heir,
+        guardianWallets: guardians,
+        heirSalt: sealed.shares[0].salt,
+        guardianSalts: sealed.shares.slice(1).map((entry) => entry.salt),
+        threshold: 1,
+        shareHashes: sealed.shareHashes,
+      });
+      const { capsule, result } = await h.newCapsule(opts(before));
+      expectSuccess(result);
+      const chain = (): kit.CapsuleState => {
+        const account = h.capsule(capsule.address);
+        return {
+          commitment: Uint8Array.from(account.commitment),
+          heirCommitment: Uint8Array.from(account.heirCommitment),
+          guardianCommitments: account.guardianCommitments.map((c) => Uint8Array.from(c)),
+          shareHashes: account.shareHashes.map((hash) => Uint8Array.from(hash)),
+          claimed: statusOf(account) === "claimed",
+          heir: account.heir.equals(PublicKey.default) ? null : account.heir.toBytes(),
+        };
+      };
+      kit.verifyKit(before, chain());
+
+      const { config } = h.sampleConfig(opts(after), commitment);
+      expectSuccess(await h.update(capsule, config));
+      expect(() => kit.verifyKit(before, chain())).to.throw(/share hashes do not match/);
+      kit.verifyKit(after, chain());
+
+      // Even after the claim, a guardian holding the old kit is refused by its own client.
+      h.warp(Number(config.heartbeatInterval));
+      expectSuccess(await h.triggerClaim(capsule));
+      const member = kit.membership(after, guardians[0].publicKey.toBytes())!;
+      expectSuccess(await h.guardianConfirm(capsule, guardians[0], member));
+      h.warp(Number(config.gracePeriod));
+      expectSuccess(await h.claim(capsule, heir, kit.membership(after, heir.publicKey.toBytes())!.salt));
+      const staleShare = kit.openShare(before, 1, inboxes[1].keyPair.secretKey);
+      expect(() => kit.releaseShare(before, staleShare, chain())).to.throw(/share hashes do not match/);
+      const share = kit.openShare(after, 1, inboxes[1].keyPair.secretKey);
+      expect(kit.releaseShare(after, share, chain()).length).to.be.above(0);
     });
   });
 

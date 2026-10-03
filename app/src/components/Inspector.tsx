@@ -8,6 +8,7 @@ import { TxLink } from "./ui";
 const INSTRUCTION_NAMES: [Uint8Array, string][] = [
   [DISCRIMINATORS.createCapsule, "create_capsule"],
   [DISCRIMINATORS.heartbeat, "heartbeat"],
+  [DISCRIMINATORS.updateCapsule, "update_capsule"],
   [DISCRIMINATORS.triggerClaim, "trigger_claim"],
   [DISCRIMINATORS.guardianConfirm, "guardian_confirm"],
   [DISCRIMINATORS.guardianVeto, "guardian_veto"],
@@ -27,6 +28,15 @@ function dataSegments(name: string, data: Uint8Array): { label: string; bytes: U
       seg("R = k·G", 8, 40, "text-verdigris-300"),
       seg("s = k + e·x", 40, 72, "text-verdigris-300"),
       seg("expires at (i64, in the proof)", 72, 80, "text-bone-300"),
+    ];
+  }
+  if (name === "update_capsule") {
+    return [
+      disc,
+      seg("new config (sealed heir and guardian commitments, timers, share hashes)", 8, data.length - 72, "text-bone-300"),
+      seg("R = k·G", data.length - 72, data.length - 40, "text-verdigris-300"),
+      seg("s = k + e·x", data.length - 40, data.length - 8, "text-verdigris-300"),
+      seg("expires at (i64, in the proof)", data.length - 8, data.length, "text-bone-300"),
     ];
   }
   if (name === "create_capsule") {

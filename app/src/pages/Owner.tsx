@@ -1,8 +1,8 @@
-import { CapsuleAccount, PROGRAM_ID, createCapsuleIx, fetchCapsule, heartbeatIx, timeline } from "@sdk/client";
+import { CapsuleAccount, PROGRAM_ID, createCapsuleIx, fetchCapsule, heartbeatIx, timeline, updateCapsuleIx } from "@sdk/client";
 import * as kit from "@sdk/kit";
 import * as liveness from "@sdk/liveness";
 import { PublicKey } from "@solana/web3.js";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Inspector } from "../components/Inspector";
 import { ActingAs } from "../components/Shell";
@@ -10,7 +10,7 @@ import { ActionButton, Copyable, Field, Heading, Notice, Stat, StatusChip } from
 import { Countdown, Ecg, Seal, Vital } from "../components/visuals";
 import { CLUSTER } from "../config";
 import { Actor, CAST, personaActor } from "../lib/actors";
-import { useAdoptPendingKit, useMailboxKit, who } from "../lib/capsule";
+import { chainState, useAdoptPendingKit, useMailboxKit, who } from "../lib/capsule";
 import { SentTransaction, connection, readChainTime, sendWithRelayer } from "../lib/chain";
 import { getRelayer, sendRelayed, useRelayer } from "../lib/relayer";
 import { duration, hex, short, when } from "../lib/format";
@@ -65,19 +65,29 @@ export function OwnerPage() {
       ) : capsule === undefined ? (
         <div className="card p-8 text-bone-400">Looking up your capsule…</div>
       ) : capsule === null ? (
-        <CreateWizard
+        <SealWizard
           actor={actor!}
           secret={secret}
           commitment={commitment!}
           address={address!}
-          onCreated={(created) => {
+          mode={{ kind: "create" }}
+          onSent={(created) => {
             setSent(created);
             refresh();
           }}
           onFailed={refresh}
         />
       ) : (
-        <Dashboard actor={actor!} secret={secret} address={address!} capsule={capsule} sent={sent} onSent={setSent} />
+        <Dashboard
+          actor={actor!}
+          secret={secret}
+          commitment={commitment!}
+          address={address!}
+          capsule={capsule}
+          sent={sent}
+          onSent={setSent}
+          onRefresh={refresh}
+        />
       )}
     </div>
   );
@@ -131,30 +141,54 @@ function parseInvite(text: string): { certificate?: kit.InboxCertificate; error?
   }
 }
 
-function CreateWizard({
+/** Creating a capsule, or re-sealing an existing one with new holders and rules (`update_capsule`). */
+type SealMode = { kind: "create" } | { kind: "update"; capsule: CapsuleAccount; kit?: kit.CapsuleKit };
+
+/** The interval/grace choices, plus the capsule's current value when it is not one of them. */
+function choices(options: { label: string; seconds: number }[], current?: number) {
+  return current === undefined || options.some((o) => o.seconds === current)
+    ? options
+    : [...options, { label: `${duration(current)} (current)`, seconds: current }];
+}
+
+const hashesKey = (hashes: Uint8Array[]) => hashes.map(hex).join(",");
+
+function SealWizard({
   actor,
   secret,
   commitment,
   address,
-  onCreated,
+  mode,
+  onSent,
   onFailed,
+  onCancel,
 }: {
   actor: Actor;
   secret: bigint;
   commitment: Uint8Array;
   address: PublicKey;
-  onCreated: (sent: SentTransaction) => void;
-  /** Re-reads the capsule: a registration whose confirmation failed may have landed anyway. */
+  mode: SealMode;
+  onSent: (sent?: SentTransaction) => void;
+  /** Re-reads the capsule: a transaction whose confirmation failed may have landed anyway. */
   onFailed: () => void;
+  onCancel?: () => void;
 }) {
+  const updating = mode.kind === "update" ? mode : undefined;
   const mailbox = useMailbox();
   const action = useAction();
-  const [heirText, setHeirText] = useState("");
-  const [guardianTexts, setGuardianTexts] = useState<string[]>(["", "", ""]);
+  // Re-sealing starts from the current holders and rules: change what changed.
+  const [heirText, setHeirText] = useState(() => (updating?.kit ? kit.encodeInboxCertificate(updating.kit.shares[0].holder) : ""));
+  const [guardianTexts, setGuardianTexts] = useState<string[]>(() =>
+    updating?.kit ? updating.kit.shares.slice(1).map((entry) => kit.encodeInboxCertificate(entry.holder)) : ["", "", ""],
+  );
   const [plaintext, setPlaintext] = useState("");
-  const [interval, setIntervalSeconds] = useState(CLUSTER === "devnet" ? 180 : 60);
-  const [grace, setGrace] = useState(60);
-  const [quorum, setQuorum] = useState(2);
+  const [interval, setIntervalSeconds] = useState(() =>
+    updating ? Number(updating.capsule.heartbeatInterval) : CLUSTER === "devnet" ? 180 : 60,
+  );
+  const [grace, setGrace] = useState(() => (updating ? Number(updating.capsule.gracePeriod) : 60));
+  const [quorum, setQuorum] = useState(() => updating?.capsule.guardianThreshold || 2);
+  // Share hashes of the kit sealed for the update in flight: once the chain shows them, the update landed.
+  const [inFlight, setInFlight] = useState<string>();
 
   const heir = parseInvite(heirText);
   const guardians = guardianTexts.map(parseInvite);
@@ -163,6 +197,12 @@ function CreateWizard({
   const secretBytes = new TextEncoder().encode(plaintext);
   const inviteProblems = [heir, ...guardians].some((x) => x.error);
   const ready = heir.certificate && validGuardians.length > 0 && secretBytes.length > 0 && !inviteProblems;
+
+  // An update whose reply was lost (SIK-22) still shows up on-chain: close as if it had been confirmed.
+  const landed = Boolean(updating && inFlight && inFlight === hashesKey(updating.capsule.shareHashes));
+  useEffect(() => {
+    if (landed) onSent();
+  }, [landed, onSent]);
 
   const inviteFamily = () =>
     action.run("Inviting", async () => {
@@ -183,7 +223,7 @@ function CreateWizard({
   const seal = () =>
     action.run("Sealing", async () => {
       // An earlier attempt may have landed although the app never heard back: never register twice.
-      if (await fetchCapsule(connection, address)) return onFailed();
+      if (!updating && (await fetchCapsule(connection, address))) return onFailed();
       // The heir's share plus `quorum` guardian shares reconstruct: the cryptographic threshold
       // mirrors the guardian quorum the program enforces.
       const sealed = await kit.sealCapsuleKit({
@@ -203,19 +243,30 @@ function CreateWizard({
         guardianThreshold: effectiveQuorum,
         shareHashes: sealed.shareHashes,
       };
-      const proof = liveness.proveRegistration(secret, PROGRAM_ID, address, config);
-      // The relayer also pays the new capsule's rent (~0.004 SOL), hence the larger top-up for a browser relayer.
       const relayer = await getRelayer();
-      await relayer.ready(0.05);
+      let instruction;
+      if (updating) {
+        // Proven like a heartbeat, over the whole new config: no wallet signs, nobody can alter the rules in transit.
+        const expiresAt = (await readChainTime()) + liveness.DEFAULT_PROOF_LIFETIME;
+        const proof = liveness.proveUpdate(secret, PROGRAM_ID, address, updating.capsule.heartbeatNonce, expiresAt, config);
+        instruction = updateCapsuleIx({ capsule: address, config, proof, expiresAt });
+        await relayer.ready(0.01);
+      } else {
+        const proof = liveness.proveRegistration(secret, PROGRAM_ID, address, config);
+        instruction = createCapsuleIx({ payer: relayer.publicKey, commitment, config, proof });
+        // The relayer also pays the new capsule's rent (~0.004 SOL), hence the larger top-up for a browser relayer.
+        await relayer.ready(0.05);
+      }
       // Filed before broadcasting (SIK-22): if the confirmation is lost although the transaction landed, the
-      // dashboard adopts this kit, so a registered capsule never ends up without one.
+      // dashboard adopts this kit, so a capsule on-chain never ends up without the kit that matches it.
       const text = kit.encodeKit(sealed);
       postPendingKit(address.toBase58(), text);
+      setInFlight(hashesKey(sealed.shareHashes));
       try {
-        const sent = await sendWithRelayer([createCapsuleIx({ payer: relayer.publicKey, commitment, config, proof })], relayer);
+        const sent = await sendWithRelayer([instruction], relayer);
         postKit(address.toBase58(), text);
         setPlaintext("");
-        onCreated(sent);
+        onSent(sent);
       } catch (error) {
         onFailed();
         throw error;
@@ -225,14 +276,20 @@ function CreateWizard({
   const knownInvites = Object.entries(mailbox.invites);
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
+    <div className={updating ? "space-y-6" : "grid gap-6 lg:grid-cols-[1fr_20rem]"}>
       <div className="space-y-6">
-        {action.error && <Notice tone="error" onClose={action.clearError}>{action.error}</Notice>}
+        {action.error && (
+          <Notice tone="error" onClose={action.clearError}>
+            {action.error}
+            {updating && inFlight && " If only the reply was lost, the update may still land; this closes when the chain shows it."}
+          </Notice>
+        )}
 
-        <Step n={1} title="Who inherits, who guards" done={Boolean(heir.certificate && validGuardians.length)}>
+        <Step n={1} title={updating ? "Who inherits, who guards — now" : "Who inherits, who guards"} done={Boolean(heir.certificate && validGuardians.length)}>
           <p className="text-sm leading-relaxed text-bone-300">
-            Your heir and guardians each send you an <em>invite</em>: an encryption key signed by their wallet. SIKRIT
-            checks every signature, so nobody in between can swap in their own key.
+            {updating
+              ? "Your current heir and guardians are filled in from your kit. Replace, remove or add anyone: each needs an invite signed by their own wallet."
+              : "Your heir and guardians each send you an invite: an encryption key signed by their wallet. SIKRIT checks every signature, so nobody in between can swap in their own key."}
           </p>
           <div className="flex flex-wrap gap-2">
             <ActionButton className="btn-ghost" busy={action.busy} busyLabel="Inviting" label="Invite the demo family" onClick={inviteFamily} />
@@ -256,10 +313,14 @@ function CreateWizard({
           )}
         </Step>
 
-        <Step n={2} title="What to seal" done={secretBytes.length > 0}>
+        <Step n={2} title={updating ? "What to seal, again" : "What to seal"} done={secretBytes.length > 0}>
           <Field
             label="Secret"
-            hint="Encrypted in this browser under a fresh random key; only the key is split. The plaintext never leaves your device."
+            hint={
+              updating
+                ? "Enter it again (or a new one): the capsule gets a fresh key and new shares, and your current kit stops matching the chain. It never leaves your device."
+                : "Encrypted in this browser under a fresh random key; only the key is split. The plaintext never leaves your device."
+            }
           >
             <textarea
               rows={3}
@@ -281,14 +342,14 @@ function CreateWizard({
           <div className="grid gap-4 sm:grid-cols-3">
             <Field label="Heartbeat every" hint="Miss one and anyone may open a claim.">
               <select value={interval} onChange={(e) => setIntervalSeconds(Number(e.target.value))}>
-                {INTERVALS.map((o) => (
+                {choices(INTERVALS, updating && Number(updating.capsule.heartbeatInterval)).map((o) => (
                   <option key={o.seconds} value={o.seconds}>{o.label}</option>
                 ))}
               </select>
             </Field>
             <Field label="Grace period" hint="Time to cancel a false alarm.">
               <select value={grace} onChange={(e) => setGrace(Number(e.target.value))}>
-                {GRACES.map((o) => (
+                {choices(GRACES, updating && Number(updating.capsule.gracePeriod)).map((o) => (
                   <option key={o.seconds} value={o.seconds}>{o.label}</option>
                 ))}
               </select>
@@ -315,28 +376,53 @@ function CreateWizard({
           </p>
         </Step>
 
-        <Step n={4} title="Seal and register" done={false}>
-          <p className="text-sm leading-relaxed text-bone-300">
-            One transaction, paid by the relayer: it stores <span className="mono">P</span>, the rules, one hash per
-            share and a salted commitment to each family member, plus a proof that you know{" "}
-            <span className="mono">x</span>. No wallet signs it, yours or theirs, and none is written to the chain.
-          </p>
-          <ActionButton className="btn-seal px-6 py-3 text-base" busy={action.busy} busyLabel="Sealing" label="Seal the capsule" onClick={seal} disabled={!ready} />
-        </Step>
+        {updating ? (
+          <Step n={4} title="Re-seal and update" done={false}>
+            <p className="text-sm leading-relaxed text-bone-300">
+              One transaction, paid by the relayer and authorized like a heartbeat: a proof that you know{" "}
+              <span className="mono">x</span>, bound to the new rules. It also proves you are alive (a pending claim is
+              cancelled). The chain forgets the old commitments and share hashes, so guardians refuse to release from the
+              old kit; send everyone the new one.
+            </p>
+            <p className="text-xs leading-relaxed text-amber-glow">
+              Shares already handed out are not taken back: enough former holders together could still open the old kit
+              offline. If you remove someone you no longer trust, also move the funds behind the secret.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <ActionButton className="btn-seal px-6 py-3 text-base" busy={action.busy} busyLabel="Sealing" label="Re-seal and update" onClick={seal} disabled={!ready} />
+              {onCancel && (
+                <button className="btn-ghost" onClick={onCancel} disabled={Boolean(action.busy)}>
+                  Cancel
+                </button>
+              )}
+            </div>
+          </Step>
+        ) : (
+          <Step n={4} title="Seal and register" done={false}>
+            <p className="text-sm leading-relaxed text-bone-300">
+              One transaction, paid by the relayer: it stores <span className="mono">P</span>, the rules, one hash per
+              share and a salted commitment to each family member, plus a proof that you know{" "}
+              <span className="mono">x</span>. No wallet signs it, yours or theirs, and none is written to the chain.
+            </p>
+            <ActionButton className="btn-seal px-6 py-3 text-base" busy={action.busy} busyLabel="Sealing" label="Seal the capsule" onClick={seal} disabled={!ready} />
+          </Step>
+        )}
       </div>
 
-      <aside className="space-y-4 lg:sticky lg:top-24 lg:self-start">
-        <div className="card space-y-4 p-5">
-          <div className="eyebrow">Your capsule will live at</div>
-          <Copyable text={address.toBase58()} display={short(address, 8, 8)} />
-          <div className="eyebrow pt-2">Public key P = x·G</div>
-          <div className="mono break-all text-bone-400">{hex(commitment)}</div>
-          <p className="text-xs leading-relaxed text-bone-500">
-            Derived from P alone. Signed in as {who(actor.publicKey)}, yet that wallet is not part of this address, its
-            data, or any future heartbeat.
-          </p>
-        </div>
-      </aside>
+      {!updating && (
+        <aside className="space-y-4 lg:sticky lg:top-24 lg:self-start">
+          <div className="card space-y-4 p-5">
+            <div className="eyebrow">Your capsule will live at</div>
+            <Copyable text={address.toBase58()} display={short(address, 8, 8)} />
+            <div className="eyebrow pt-2">Public key P = x·G</div>
+            <div className="mono break-all text-bone-400">{hex(commitment)}</div>
+            <p className="text-xs leading-relaxed text-bone-500">
+              Derived from P alone. Signed in as {who(actor.publicKey)}, yet that wallet is not part of this address, its
+              data, or any future heartbeat.
+            </p>
+          </div>
+        </aside>
+      )}
     </div>
   );
 }
@@ -391,17 +477,21 @@ function InviteInput({
 function Dashboard({
   actor,
   secret,
+  commitment,
   address,
   capsule,
   sent,
   onSent,
+  onRefresh,
 }: {
   actor: Actor;
   secret: bigint;
+  commitment: Uint8Array;
   address: PublicKey;
   capsule: CapsuleAccount;
   sent?: SentTransaction;
   onSent: (sent: SentTransaction) => void;
+  onRefresh: () => void;
 }) {
   const now = useChainNow();
   const action = useAction();
@@ -409,9 +499,26 @@ function Dashboard({
   const ownKit = useMailboxKit(address);
   useAdoptPendingKit(address, capsule);
   const [beats, setBeats] = useState(0);
+  const [editing, setEditing] = useState(false);
+  const closeEditor = useCallback(
+    (updated?: SentTransaction) => {
+      if (updated) onSent(updated);
+      setEditing(false);
+    },
+    [onSent],
+  );
   const relayer = useRelayer();
   const t = now !== undefined ? timeline(capsule, now) : undefined;
-  const family = ownKit?.shares.map((entry) => new PublicKey(entry.holder.wallet)) ?? [];
+  // Names come only from a kit that matches the chain: right after an update the filed kit may still be the old one.
+  const currentKit = useMemo(() => {
+    try {
+      if (ownKit) kit.verifyKit(ownKit, chainState(capsule));
+      return ownKit;
+    } catch {
+      return undefined;
+    }
+  }, [ownKit, capsule]);
+  const family = currentKit?.shares.map((entry) => new PublicKey(entry.holder.wallet)) ?? [];
 
   const heartbeat = () =>
     action.run("Proving", async () => {
@@ -489,6 +596,27 @@ function Dashboard({
         />
       )}
 
+      {editing ? (
+        <section className="space-y-5 animate-rise">
+          <div className="space-y-1">
+            <div className="eyebrow">Re-seal your capsule</div>
+            <p className="max-w-3xl text-sm leading-relaxed text-bone-400">
+              Same address, same liveness key; new heir, guardians, quorum or timers, and a new kit for everyone who holds
+              a share.
+            </p>
+          </div>
+          <SealWizard
+            actor={actor}
+            secret={secret}
+            commitment={commitment}
+            address={address}
+            mode={{ kind: "update", capsule, kit: currentKit }}
+            onSent={closeEditor}
+            onFailed={onRefresh}
+            onCancel={() => setEditing(false)}
+          />
+        </section>
+      ) : (
       <section className="grid gap-6 md:grid-cols-3">
         <div className="card space-y-5 p-6 md:col-span-2">
           <div className="eyebrow">The rules you set</div>
@@ -509,24 +637,32 @@ function Dashboard({
               </span>
             ))}
           </div>
+          {capsule.status !== "claimed" && (
+            <button className="btn-ghost" onClick={() => setEditing(true)}>
+              Change heir, guardians or rules
+            </button>
+          )}
         </div>
         <div className="card space-y-4 p-6">
           <div className="eyebrow">Sealed kit</div>
           <p className="text-sm leading-relaxed text-bone-300">
             {capsule.shareHashes.length} encrypted shares, one per holder. Only their hashes are on-chain.
           </p>
-          {mailbox.kits[address.toBase58()] ? (
+          {currentKit ? (
             <>
               <Notice tone="success">Delivered to the family's inboxes (demo mailbox).</Notice>
               <button className="btn-ghost w-full" onClick={() => download(`sikrit-kit-${short(address, 6, 0)}.json`, mailbox.kits[address.toBase58()])}>
                 Download kit
               </button>
             </>
+          ) : mailbox.kits[address.toBase58()] ? (
+            <Notice tone="warn">The kit in this browser no longer matches the capsule on-chain.</Notice>
           ) : (
             <Notice tone="warn">No copy of the kit in this browser. Holders need the kit file you downloaded when sealing.</Notice>
           )}
         </div>
       </section>
+      )}
     </div>
   );
 }

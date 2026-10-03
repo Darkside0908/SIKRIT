@@ -1,7 +1,7 @@
 /**
  * End-to-end run of the demo story in a real browser against a real cluster:
- * Pak Arif seals a seed phrase → ZK heartbeat → falls silent → Sari opens the claim →
- * Budi and Dewi confirm → grace period → Sari claims → guardians release → Sari recovers the seed.
+ * Pak Arif seals a seed phrase → ZK heartbeat → re-seals it without Rizal (update_capsule) → falls silent →
+ * Sari opens the claim → Budi and Dewi confirm → grace period → Sari claims → guardians release → Sari recovers the seed.
  *
  * Afterwards it checks the privacy claims on the chain itself: the owner's wallet appears in none of
  * the capsule's transactions, and each family member appears only in the transaction where they act
@@ -18,9 +18,9 @@
  *   SLOWMO=ms    pause between browser actions (makes a recording watchable)
  *   BROWSER_RELAYER_KEY  base64 secret key the app's in-browser relayer starts with (scripts/devnet-e2e.mjs
  *                funds it when it tests the static-host fallback on devnet, whose faucet refuses the app)
- *   LOSE_CONFIRMATION=0  register the capsule normally. By default (unless recording or curating screenshots) the
- *                run lets the registration land but drops the reply, as a relayer timeout would: the app must
- *                still end up with the capsule and its kit (SIK-22)
+ *   LOSE_CONFIRMATION=0  register and re-seal the capsule normally. By default (unless recording or curating
+ *                screenshots) the run lets both transactions land but drops their replies, as a relayer timeout
+ *                would: the app must still end up with the capsule and the kit that matches it (SIK-22)
  *
  * When the host runs the relayer service (api/relay.ts: vite dev/preview, Vercel), the chain check also
  * confirms it paid for every capsule transaction.
@@ -242,6 +242,26 @@ try {
     await dwell(5000, section("What the chain sees"));
   });
 
+  await step(`owner re-seals the capsule without Rizal${LOSE_CONFIRMATION ? " (its confirmation lost too)" : ""}`, async () => {
+    await button("Change heir, guardians or rules").click();
+    // The editor starts from the current kit: Sari, then Budi, Dewi and Rizal.
+    await text("✓ signed by Rizal").waitFor();
+    await page.getByPlaceholder("sikrit-invite:v1:…").nth(3).fill("");
+    await page.getByLabel("Guardian quorum").selectOption("2");
+    await button("Use a sample seed phrase").click();
+    await dwell(2000, button("Re-seal and update"));
+    const restore = LOSE_CONFIRMATION ? await loseNextConfirmation() : undefined;
+    await button("Re-seal and update").click();
+    // The editor closes once the chain shows the new kit's share hashes, whether or not the reply arrived.
+    await button("Change heir, guardians or rules").waitFor({ timeout: MINUTE });
+    await text("2 of 2").waitFor();
+    await restore?.();
+    if (!restore) await text("update_capsule").waitFor();
+    if (await page.getByText("Rizal").count()) throw new Error("Rizal is still listed after the re-seal");
+    await text("Delivered to the family's inboxes").waitFor();
+    await dwell(2500);
+  });
+
   await step("owner falls silent past the interval", async () => {
     recorder?.pause();
     await text("Overdue — anyone may open a claim now").waitFor({ timeout: 2 * MINUTE });
@@ -256,7 +276,7 @@ try {
     await shot("04-claim-open");
   });
 
-  await step("two of three guardians confirm", async () => {
+  await step("both remaining guardians confirm", async () => {
     await go("guardian");
     for (const guardian of ["Budi", "Dewi"]) {
       await actAs(guardian);
@@ -326,8 +346,8 @@ try {
       .catch(() => undefined);
     const relayer = service?.relayer ? new PublicKey(service.relayer) : undefined;
     const signatures = await connection.getSignaturesForAddress(capsule);
-    // create, heartbeat, trigger, 2 × confirm, claim
-    if (signatures.length < 6) throw new Error(`expected ≥ 6 capsule transactions, found ${signatures.length}`);
+    // create, heartbeat, update, trigger, 2 × confirm, claim
+    if (signatures.length < 7) throw new Error(`expected ≥ 7 capsule transactions, found ${signatures.length}`);
     /** Where each persona's wallet shows up: instruction names of the transactions that carry it. */
     const seen = Object.fromEntries(Object.keys(cast).map((id) => [id, []]));
     for (const { signature } of signatures) {

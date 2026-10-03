@@ -22,6 +22,8 @@ pub const CAPSULE_SEED: &[u8] = b"capsule";
 pub const REGISTER_DOMAIN: &[u8] = b"SIKRIT:register:v2";
 #[constant]
 pub const LIVENESS_DOMAIN: &[u8] = b"SIKRIT:liveness:v2";
+#[constant]
+pub const UPDATE_DOMAIN: &[u8] = b"SIKRIT:update:v1";
 /// Komitmen anggota: SHA-256(MEMBER_DOMAIN ‖ P ‖ role ‖ wallet ‖ salt), lihat `member_commitment`.
 #[constant]
 pub const MEMBER_DOMAIN: &[u8] = b"SIKRIT:member:v1";
@@ -110,11 +112,7 @@ pub mod sikrit {
         );
 
         let clock = Clock::get()?;
-        require!(clock.unix_timestamp <= expires_at, SikritError::ProofExpired);
-        require!(
-            expires_at <= clock.unix_timestamp.saturating_add(MAX_PROOF_LIFETIME),
-            SikritError::ProofExpiryTooFar
-        );
+        check_proof_expiry(&clock, expires_at)?;
 
         let nonce = capsule.heartbeat_nonce;
         let e = schnorr::challenge(
@@ -141,6 +139,68 @@ pub mod sikrit {
             capsule: capsule_key,
             nonce,
             timestamp: clock.unix_timestamp,
+            claim_cancelled,
+        });
+
+        Ok(())
+    }
+
+    /// Pemilik mengganti ahli waris, guardian, kuorum, timer dan share hash (kit baru) tanpa wallet apa pun.
+    ///
+    /// Otorisasinya bukti Schnorr atas x seperti heartbeat, dengan domain sendiri dan challenge yang mengikat
+    /// `nonce ‖ expires_at ‖ Borsh(config)`: bukti hanya berlaku sekali, sebentar, dan hanya untuk konfigurasi itu.
+    /// Update membuktikan pemilik hidup, jadi juga membatalkan klaim yang sedang berjalan. Komitmen dan share hash
+    /// lama hilang dari chain, sehingga kit lama tidak lagi cocok dan guardian yang memegangnya menolak release.
+    pub fn update_capsule(
+        ctx: Context<UpdateCapsule>,
+        config: CapsuleConfig,
+        proof: SchnorrProof,
+        expires_at: i64,
+    ) -> Result<()> {
+        config.validate()?;
+        let capsule_key = ctx.accounts.capsule.key();
+        let capsule = &mut ctx.accounts.capsule;
+        require!(
+            capsule.status != CapsuleStatus::Claimed,
+            SikritError::CapsuleAlreadyClaimed
+        );
+
+        let clock = Clock::get()?;
+        check_proof_expiry(&clock, expires_at)?;
+
+        let nonce = capsule.heartbeat_nonce;
+        let e = schnorr::challenge(
+            &crate::ID,
+            UPDATE_DOMAIN,
+            &capsule_key,
+            &capsule.commitment,
+            &proof.r,
+            &schnorr::update_context(nonce, expires_at, &config.try_to_vec()?),
+        );
+        schnorr::verify(&capsule.commitment, &proof, &e)?;
+
+        let claim_cancelled = capsule.status == CapsuleStatus::ClaimPending;
+
+        capsule.heir_commitment = config.heir_commitment;
+        capsule.guardian_commitments = config.guardian_commitments;
+        capsule.guardian_threshold = config.guardian_threshold;
+        capsule.heartbeat_interval = config.heartbeat_interval;
+        capsule.grace_period = config.grace_period;
+        capsule.share_hashes = config.share_hashes;
+        capsule.heartbeat_nonce = nonce.checked_add(1).ok_or(SikritError::NonceOverflow)?;
+        capsule.last_heartbeat = clock.unix_timestamp;
+        capsule.status = CapsuleStatus::Active;
+        capsule.claim_triggered_at = 0;
+        capsule.approvals = 0;
+        capsule.vetoes = 0;
+
+        emit!(CapsuleUpdated {
+            capsule: capsule_key,
+            nonce,
+            guardian_count: capsule.guardian_commitments.len() as u8,
+            guardian_threshold: capsule.guardian_threshold,
+            heartbeat_interval: capsule.heartbeat_interval,
+            grace_period: capsule.grace_period,
             claim_cancelled,
         });
 
@@ -291,6 +351,16 @@ pub struct Heartbeat<'info> {
 }
 
 #[derive(Accounts)]
+pub struct UpdateCapsule<'info> {
+    #[account(
+        mut,
+        seeds = [CAPSULE_SEED, capsule.commitment.as_ref()],
+        bump = capsule.bump,
+    )]
+    pub capsule: Account<'info, Capsule>,
+}
+
+#[derive(Accounts)]
 pub struct TriggerClaim<'info> {
     #[account(
         mut,
@@ -380,6 +450,16 @@ pub fn member_commitment(capsule_commitment: &[u8; 32], role: u8, wallet: &Pubke
     hashv(&[MEMBER_DOMAIN, capsule_commitment, &[role], wallet.as_ref(), salt]).to_bytes()
 }
 
+/// Bukti heartbeat/update hanya diterima selama `now ≤ expires_at ≤ now + MAX_PROOF_LIFETIME` (jam cluster).
+fn check_proof_expiry(clock: &Clock, expires_at: i64) -> Result<()> {
+    require!(clock.unix_timestamp <= expires_at, SikritError::ProofExpired);
+    require!(
+        expires_at <= clock.unix_timestamp.saturating_add(MAX_PROOF_LIFETIME),
+        SikritError::ProofExpiryTooFar
+    );
+    Ok(())
+}
+
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, InitSpace)]
 pub enum CapsuleStatus {
     Active,
@@ -441,8 +521,8 @@ pub struct SchnorrProof {
 /// Prover (client): k acak, R = k·G, e = H(transkrip) mod ℓ, s = k + e·x mod ℓ.
 /// Verifier (program): terima iff s·G − e·P == R, dengan
 ///   e = SHA-512(domain ‖ program_id ‖ capsule ‖ P ‖ R ‖ context) mod ℓ
-/// `context` = nonce heartbeat (u64 LE) ‖ expires_at (i64 LE) untuk liveness, atau Borsh(CapsuleConfig)
-/// untuk registrasi.
+/// `context` = nonce heartbeat (u64 LE) ‖ expires_at (i64 LE) untuk liveness, Borsh(CapsuleConfig) untuk
+/// registrasi, atau nonce ‖ expires_at ‖ Borsh(CapsuleConfig) untuk update.
 pub mod schnorr {
     use super::*;
     use curve25519_dalek::constants::ED25519_BASEPOINT_COMPRESSED;
@@ -454,6 +534,11 @@ pub mod schnorr {
         context[..8].copy_from_slice(&nonce.to_le_bytes());
         context[8..].copy_from_slice(&expires_at.to_le_bytes());
         context
+    }
+
+    /// Prefiks berpanjang tetap (16 byte) lalu config: encoding-nya tidak ambigu.
+    pub fn update_context(nonce: u64, expires_at: i64, config: &[u8]) -> Vec<u8> {
+        [&liveness_context(nonce, expires_at)[..], config].concat()
     }
 
     pub fn challenge(
@@ -624,6 +709,17 @@ pub struct HeartbeatVerified {
     pub capsule: Pubkey,
     pub nonce: u64,
     pub timestamp: i64,
+    pub claim_cancelled: bool,
+}
+
+#[event]
+pub struct CapsuleUpdated {
+    pub capsule: Pubkey,
+    pub nonce: u64,
+    pub guardian_count: u8,
+    pub guardian_threshold: u8,
+    pub heartbeat_interval: i64,
+    pub grace_period: i64,
     pub claim_cancelled: bool,
 }
 
@@ -929,6 +1025,33 @@ mod tests {
         }
     }
 
+    /// Vektor `proveUpdate` dari sdk/liveness.ts (x, aux, program, capsule dan expires_at seperti di atas, nonce = 7;
+    /// config: heir 0x44³², interval 60, grace 120, guardian 0x55³² dan 0x66³², kuorum 1, share hash 0x77³²/0x88³²/0x99³²).
+    /// Mengunci transkrip update (prefiks nonce ‖ expires_at lalu Borsh config) lintas bahasa.
+    #[test]
+    fn update_known_answer_vector_from_typescript_sdk() {
+        let p = hex32("bf8a3946a4fa347da1c7998a0847d8c7adc04d2a4fc2a6ad184745ee1a3109ef");
+        let config = CapsuleConfig {
+            heir_commitment: [0x44; 32],
+            heartbeat_interval: 60,
+            grace_period: 120,
+            guardian_commitments: vec![[0x55; 32], [0x66; 32]],
+            guardian_threshold: 1,
+            share_hashes: vec![[0x77; 32], [0x88; 32], [0x99; 32]],
+        };
+        let proof = SchnorrProof {
+            r: hex32("6da114eef0357c0097840bb0b0a3017eb156aa0291eff6b050dd97678cdccda8"),
+            s: hex32("c6b4e426c112793392968595d48ee21ad20561565e430b333512661f6b59a303"),
+        };
+        let context = schnorr::update_context(7, EXPIRES_AT, &config.try_to_vec().unwrap());
+        assert_eq!(context.len(), 16 + 32 + 8 + 8 + (4 + 2 * 32) + 1 + (4 + 3 * 32));
+        verify(&p, &proof, UPDATE_DOMAIN, &CAPSULE, &context).unwrap();
+        assert_err(
+            verify(&p, &proof, LIVENESS_DOMAIN, &CAPSULE, &context),
+            SikritError::ProofVerificationFailed,
+        );
+    }
+
     /// Vektor yang dihitung ulang dengan `hashlib` Python: P = 0x33³², wallet = 0x44³², salt = 0x55³².
     #[test]
     fn member_commitment_known_answer_and_binding() {
@@ -978,6 +1101,36 @@ mod tests {
                 SikritError::ProofVerificationFailed,
             );
         }
+    }
+
+    #[test]
+    fn update_proof_binds_nonce_expiry_and_the_whole_config() {
+        let x = hash_scalar("owner");
+        let p = commit(&x);
+        let original = config().try_to_vec().unwrap();
+        let context = schnorr::update_context(3, EXPIRES_AT, &original);
+        let proof = prove(&x, UPDATE_DOMAIN, &CAPSULE, &context);
+        verify(&p, &proof, UPDATE_DOMAIN, &CAPSULE, &context).unwrap();
+
+        let other_heir = CapsuleConfig { heir_commitment: opening(ROLE_HEIR).2, ..config() }.try_to_vec().unwrap();
+        for (domain, tampered) in [
+            (UPDATE_DOMAIN, schnorr::update_context(4, EXPIRES_AT, &original)), // replay after the nonce moved on
+            (UPDATE_DOMAIN, schnorr::update_context(3, EXPIRES_AT + 3600, &original)), // expiry stretched
+            (UPDATE_DOMAIN, schnorr::update_context(3, EXPIRES_AT, &other_heir)), // another heir swapped in
+            (LIVENESS_DOMAIN, context.clone()), // replayed as a heartbeat
+            (REGISTER_DOMAIN, context.clone()), // replayed as a registration
+        ] {
+            assert_err(
+                verify(&p, &proof, domain, &CAPSULE, &tampered),
+                SikritError::ProofVerificationFailed,
+            );
+        }
+        // A heartbeat for the same nonce and expiry authorizes no update.
+        let beat = prove(&x, LIVENESS_DOMAIN, &CAPSULE, &schnorr::liveness_context(3, EXPIRES_AT));
+        assert_err(
+            verify(&p, &beat, UPDATE_DOMAIN, &CAPSULE, &context),
+            SikritError::ProofVerificationFailed,
+        );
     }
 
     #[test]

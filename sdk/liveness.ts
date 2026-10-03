@@ -8,8 +8,9 @@
  *   e     = SHA-512(domain ‖ program_id ‖ capsule ‖ P ‖ R ‖ context) mod ℓ
  *   proof = (R = k·G, s = k + e·x mod ℓ)          verifier: s·G − e·P == R
  *
- * `context` is the capsule's `heartbeat_nonce` (u64 LE) ‖ `expires_at` (i64 LE) for liveness proofs,
- * or the Borsh encoding of `CapsuleConfig` for the proof-of-possession sent with `create_capsule`.
+ * `context` is the capsule's `heartbeat_nonce` (u64 LE) ‖ `expires_at` (i64 LE) for liveness proofs, the Borsh
+ * encoding of `CapsuleConfig` for the proof-of-possession sent with `create_capsule`, and nonce ‖ expires_at ‖
+ * Borsh(CapsuleConfig) for `update_capsule`.
  */
 import { ed25519 } from "@noble/curves/ed25519";
 import { sha256 } from "@noble/hashes/sha256";
@@ -25,6 +26,7 @@ export const L = ed25519.CURVE.n;
 export const CAPSULE_SEED = utf8ToBytes("capsule");
 export const REGISTER_DOMAIN = utf8ToBytes("SIKRIT:register:v2");
 export const LIVENESS_DOMAIN = utf8ToBytes("SIKRIT:liveness:v2");
+export const UPDATE_DOMAIN = utf8ToBytes("SIKRIT:update:v1");
 export const MEMBER_DOMAIN = utf8ToBytes("SIKRIT:member:v1");
 
 /** The program refuses liveness proofs that expire more than this far ahead (seconds). */
@@ -233,6 +235,28 @@ export function proveLiveness(
   aux?: Uint8Array,
 ): SchnorrProof {
   return prove(x, programId, LIVENESS_DOMAIN, capsule, livenessContext(nonce, expiresAt), aux);
+}
+
+/** `update_capsule` context: the liveness context (fixed 16 bytes) followed by the new configuration. */
+export function updateContext(nonce: bigint | number, expiresAt: bigint | number, config: CapsuleConfigInput): Uint8Array {
+  return concatBytes(livenessContext(nonce, expiresAt), encodeCapsuleConfig(config));
+}
+
+/**
+ * Authorizes `update_capsule` (new heir, guardians, quorum, timers and share hashes) for the capsule's current
+ * `heartbeat_nonce`, valid until `expiresAt` like a heartbeat. Binding the whole config means a relayer can neither
+ * alter the new roster nor replay the proof once the nonce has moved on.
+ */
+export function proveUpdate(
+  x: bigint,
+  programId: PublicKey,
+  capsule: PublicKey,
+  nonce: bigint | number,
+  expiresAt: bigint | number,
+  config: CapsuleConfigInput,
+  aux?: Uint8Array,
+): SchnorrProof {
+  return prove(x, programId, UPDATE_DOMAIN, capsule, updateContext(nonce, expiresAt, config), aux);
 }
 
 /** Proof-of-possession for `create_capsule`, bound to the full capsule configuration. */

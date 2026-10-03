@@ -27,6 +27,7 @@ const anchorDiscriminator = (preimage: string): Uint8Array => sha256(utf8ToBytes
 export const DISCRIMINATORS = {
   createCapsule: anchorDiscriminator("global:create_capsule"),
   heartbeat: anchorDiscriminator("global:heartbeat"),
+  updateCapsule: anchorDiscriminator("global:update_capsule"),
   triggerClaim: anchorDiscriminator("global:trigger_claim"),
   guardianConfirm: anchorDiscriminator("global:guardian_confirm"),
   guardianVeto: anchorDiscriminator("global:guardian_veto"),
@@ -150,6 +151,27 @@ export function heartbeatIx(args: {
     programId: args.programId ?? PROGRAM_ID,
     keys: [writable(args.capsule)],
     data: Buffer.from(concatBytes(DISCRIMINATORS.heartbeat, proofBytes(args.proof), i64(args.expiresAt))),
+  });
+}
+
+/**
+ * Signer-less like a heartbeat: the owner's proof over the new config (`proveUpdate`) is the only authorization, and
+ * the transaction reveals no wallet. Holders of the previous kit must get the new one: their old salts and share
+ * hashes no longer match the chain.
+ */
+export function updateCapsuleIx(args: {
+  capsule: PublicKey;
+  config: CapsuleConfigInput;
+  proof: SchnorrProof;
+  expiresAt: bigint;
+  programId?: PublicKey;
+}): TransactionInstruction {
+  return new TransactionInstruction({
+    programId: args.programId ?? PROGRAM_ID,
+    keys: [writable(args.capsule)],
+    data: Buffer.from(
+      concatBytes(DISCRIMINATORS.updateCapsule, encodeCapsuleConfig(args.config), proofBytes(args.proof), i64(args.expiresAt)),
+    ),
   });
 }
 

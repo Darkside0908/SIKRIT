@@ -36,6 +36,7 @@ const discriminator = (name: string) => createHash("sha256").update(`global:${na
 export const RELAYED = [
   { name: "create_capsule", accounts: 3, signatures: 2, relayerSlots: [1] }, // payer of the new capsule's rent
   { name: "heartbeat", accounts: 1, signatures: 1, relayerSlots: [] },
+  { name: "update_capsule", accounts: 1, signatures: 1, relayerSlots: [] },
   { name: "trigger_claim", accounts: 1, signatures: 1, relayerSlots: [] },
   { name: "guardian_confirm", accounts: 2, signatures: 2, relayerSlots: [] },
   { name: "guardian_veto", accounts: 2, signatures: 2, relayerSlots: [] },
