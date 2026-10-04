@@ -92,12 +92,12 @@ kripto", atau bahwa waktu heartbeat tersembunyi (tidak).
 
 | Klaim | Bukti di repo |
 |---|---|
-| Heartbeat tanpa wallet pemilik | E2E Chrome (`app/e2e/demo-flow.mjs`) membaca ulang **semua 6 transaksi kapsul** di chain: wallet pemilik muncul di **0** |
-| Keluarga tidak on-chain sebelum bertindak | E2E yang sama: Sari (ahli waris) hanya muncul di transaksi klaimnya, Budi & Dewi hanya di konfirmasi masing-masing, Rizal (guardian yang tidak bertindak) di **0**; akun kapsul hanya memuat komitmen sampai klaim |
-| Murah | Verifikasi heartbeat **41.444 CU** (diukur di devnet, termasuk cek masa berlaku); fee 5.000 lamport. Heartbeat mingguan 30 tahun ≈ **0,0078 SOL** |
+| Heartbeat tanpa wallet pemilik | E2E Chrome (`app/e2e/demo-flow.mjs`) membaca ulang **semua 7 transaksi kapsul** di chain (termasuk penggantian roster): wallet pemilik muncul di **0** |
+| Keluarga tidak on-chain sebelum bertindak | E2E yang sama: Sari (ahli waris) hanya muncul di transaksi klaimnya, Budi & Dewi hanya di konfirmasi masing-masing, Rizal (guardian yang dikeluarkan lewat update) di **0**; akun kapsul hanya memuat komitmen sampai klaim |
+| Murah | Verifikasi heartbeat **41.417 CU** (diukur di devnet 4 Okt, termasuk cek masa berlaku); fee 5.000 lamport. Heartbeat mingguan 30 tahun ≈ **0,0078 SOL** |
 | Kriptografi benar | Transkrip Fiat–Shamir dikunci *known-answer vector* lintas bahasa (TS ↔ Rust); HPKE lolos vektor resmi RFC 9180; Shamir pakai library teraudit (Cure53 + Zellic) |
 | Aman | Self-audit 22 temuan (`docs/SECURITY-REVIEW.md`, program + SDK + app + relayer): replay, double-vote guardian, veto DoS, swap kunci inbox, roster keluarga yang menunjuk ke pemilik, bukti heartbeat tanpa masa berlaku, dst. — semua High/Critical sudah diperbaiki dan dites |
-| Bekerja end-to-end | 73 test (LiteSVM + SDK + client + relayer) + 12 unit test Rust + E2E browser 12 langkah, di validator lokal **dan di devnet**: seed phrase pulih identik di browser ahli waris |
+| Bekerja end-to-end | 79 test (LiteSVM + SDK + client + relayer) + 14 unit test Rust + E2E browser 13 langkah, di validator lokal **dan di devnet**: seed phrase pulih identik di browser ahli waris |
 
 ## 6. Bisnis & go-to-market *(rencana; belum ada pendapatan)*
 
@@ -122,7 +122,7 @@ lewat komunitas kripto, kampus, dan notaris/perencana keuangan. Setelah itu peng
 
 | Kriteria (Rules §8) | Jawaban SIKRIT |
 |---|---|
-| **Functionality** | Program Anchor live di devnet + SDK + app berjalan end-to-end; 73 test + 12 unit test Rust + E2E browser (localnet & devnet); kode diaudit sendiri dengan temuan terdokumentasi |
+| **Functionality** | Program Anchor live di devnet + SDK + app berjalan end-to-end; 79 test + 14 unit test Rust + E2E browser (localnet & devnet); kode diaudit sendiri dengan temuan terdokumentasi |
 | **Potential Impact** | Jutaan BTC terkunci permanen; setiap pengguna self-custody butuh rencana waris; primitive privasi yang bisa dipakai ulang (*proof of liveness* tanpa identitas) |
 | **Novelty** | Heartbeat tanpa identitas: tidak ada di 11 proyek yang kami periksa. Bukti Schnorr diverifikasi dengan syscall curve25519 dalam 41k CU. Roster tersegel melengkapinya (Ethernal juga menyegel ahli waris, tapi pemiliknya tetap terlihat): pemilik **dan** keluarganya tidak terlihat sampai bertindak |
 | **UX** | Tanpa token, tanpa KYC, tanpa hardware khusus. Pemilik tidak perlu SOL dan tidak perlu backup kunci baru (diturunkan ulang dari wallet). Setup ±2 menit |
@@ -145,6 +145,12 @@ lewat komunitas kripto, kampus, dan notaris/perencana keuangan. Setelah itu peng
 - **"What if the owner loses their wallet?"** Kunci liveness tidak bisa diturunkan lagi, heartbeat berhenti, dan kapsul
   terbuka ke ahli waris setelah interval + grace. Gagalnya ke arah yang aman untuk keluarga; pemilik bisa membuat
   kapsul baru.
+- **"Can I change my heir or guardians later?"** Ya, sejak protokol v2.1 (`update_capsule`): pemilik menyegel ulang
+  rahasianya untuk ahli waris, guardian, kuorum dan timer baru, dan mengirim satu bukti Schnorr atas seluruh config
+  baru. Tanpa wallet, dan relayer tidak bisa mengubah atau memutar ulang buktinya. Komitmen dan hash share lama hilang
+  dari chain, jadi guardian menolak me-release dari kit lama. Batas jujurnya: share yang sudah dibagikan tidak bisa
+  ditarik; cukup banyak pemegang lama yang berkolusi tetap bisa membuka kit lama (R19). Kalau yang dikeluarkan orang
+  yang tidak lagi dipercaya, pindahkan juga dananya.
 - **"Isn't the relayer a central point?"** Heartbeat tidak butuh signer: siapa pun bisa me-relay, relayer tidak bisa
   memalsukan bukti, dan pemilik bisa memakai fee payer mana pun (asal bukan wallet-nya sendiri). Relayer yang menahan
   bukti juga tidak bisa menyimpannya untuk nanti: bukti kedaluwarsa dalam 10 menit (batas program 1 jam, SIK-20).
@@ -162,7 +168,9 @@ lewat komunitas kripto, kampus, dan notaris/perencana keuangan. Setelah itu peng
 
 - **Sudah (protokol v2, live di devnet sejak 2 Okt):** heir/guardian sebagai komitmen bergaram (SIK-19), bukti
   heartbeat berumur pendek (SIK-20).
-- **v2.1 (pasca-hackathon):** watcher notifikasi, pengikatan origin pada pesan derivasi kunci (R9), dukungan Ledger
+- **Sudah (protokol v2.1, live di devnet sejak 4 Okt):** `update_capsule`, pemilik mengganti ahli waris, guardian,
+  kuorum dan timer dengan satu bukti, tanpa wallet (R13 ikut teratasi selama pemilik hidup).
+- **v2.2 (pasca-hackathon):** watcher notifikasi, pengikatan origin pada pesan derivasi kunci (R9), dukungan Ledger
   (R12), instruksi `close` (R7), deploy mainnet setelah audit eksternal.
 - **v3:** heartbeat dalam himpunan anonim (R1), kit "buta" yang menyimpan identitas keluarga di dalam amplop HPKE
   tiap pemegang (R3), KEM hibrida post-quantum X-Wing (R10), migrasi Anchor 1.x / SBPF v3 (R6), opsional NFT "surat

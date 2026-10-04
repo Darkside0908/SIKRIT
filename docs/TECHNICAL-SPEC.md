@@ -1,4 +1,4 @@
-# SIKRIT — Technical Specification (protokol v2)
+# SIKRIT — Technical Specification (protokol v2.1)
 
 > Spesifikasi teknis MVP untuk Colosseum Crypto World's Fair 2026. Fokus: **Privacy-Preserving Dead Man's Switch** di Solana.
 
@@ -52,6 +52,7 @@ pub struct Capsule {
 |---|---|---|
 | `create_capsule(commitment, config, proof)` | Inisialisasi kapsul: komitmen ahli waris & guardian, parameter timer, hash share | proof-of-possession Schnorr atas seluruh config; `payer` bebas (tidak disimpan); commitment wajib titik berorde prima |
 | `heartbeat(proof, expires_at)` | Submit Schnorr proof-of-knowledge → reset `last_heartbeat`, `heartbeat_nonce + 1`; saat `ClaimPending` membatalkan klaim | verifikasi proof terikat nonce & masa berlaku (`now ≤ expires_at ≤ now + 3600`); TANPA signer (bisa di-relay siapa pun) |
+| `update_capsule(config, proof, expires_at)` | Pemilik menyegel ulang: komitmen ahli waris & guardian, kuorum, timer, `share_hashes` baru (kit baru); dihitung sebagai heartbeat (nonce + 1, timer reset, klaim yang berjalan batal) | seperti heartbeat, dengan domain `SIKRIT:update:v1` dan bukti yang mengikat `nonce ‖ expires_at ‖ Borsh(config)`; config divalidasi seperti `create_capsule`; ditolak setelah `Claimed`; TANPA signer |
 | `trigger_claim` | Siapa pun memanggil setelah timeout → `ClaimPending` | cek `clock.unix_timestamp - last_heartbeat >= heartbeat_interval` |
 | `claim(salt)` | Heir menarik kapsul setelah grace period; wallet-nya tercatat di `heir` | signer + salt membuka `heir_commitment`, grace lewat, approvals ≥ threshold |
 | `guardian_confirm(slot, salt)` | Guardian mem-vouch pelepasan | signer + salt membuka komitmen di `slot`; satu suara per guardian (bitmap) |
@@ -62,7 +63,7 @@ pub struct Capsule {
 - **Tujuan:** buktikan pemilik masih memegang kunci privat, **tanpa** reveal identitas/wallet (waktu heartbeat tetap terlihat publik).
 - **Skema:** Schnorr identification protocol (Σ-protocol) → non-interaktif via Fiat-Shamir.
   - Prover (owner) membuktikan pengetahuan atas `x` (secret) di mana `P = x·G` (commitment publik tersimpan di kapsul).
-  - Challenge: `e = SHA-512(domain ‖ program_id ‖ capsule ‖ P ‖ R ‖ context) mod ℓ`, dengan `domain = "SIKRIT:liveness:v2"` dan `context = heartbeat_nonce (u64 LE) ‖ expires_at (i64 LE)` (anti-replay + bukti berumur pendek), atau `"SIKRIT:register:v2"` + `Borsh(CapsuleConfig)` untuk proof-of-possession saat `create_capsule`.
+  - Challenge: `e = SHA-512(domain ‖ program_id ‖ capsule ‖ P ‖ R ‖ context) mod ℓ`, dengan `domain = "SIKRIT:liveness:v2"` dan `context = heartbeat_nonce (u64 LE) ‖ expires_at (i64 LE)` (anti-replay + bukti berumur pendek), atau `"SIKRIT:register:v2"` + `Borsh(CapsuleConfig)` untuk proof-of-possession saat `create_capsule`, atau `"SIKRIT:update:v1"` + `nonce ‖ expires_at ‖ Borsh(CapsuleConfig)` untuk `update_capsule` (prefiks 16 byte berpanjang tetap, jadi encoding-nya tidak ambigu).
   - Verifier (program) cek `now ≤ expires_at ≤ now + 3600`, lalu `s·G − e·P == R` memakai syscall curve25519 Solana (~41k CU per heartbeat). App memberi masa berlaku 10 menit dari jam cluster, jadi relayer yang menahan bukti tidak bisa memakainya belakangan.
   - Detail & alasan desain: `docs/SECURITY-REVIEW.md` (SIK-01, SIK-20).
 - **Mengapa Schnorr, bukan Groth16:** ringan, implementable on-chain dalam waktu 12 hari, tetap ZK secara kriptografis (tidak bocor `x`).
@@ -150,6 +151,7 @@ Urutan "release hanya setelah `Claimed`" adalah janji guardian yang dijalankan c
 1. **Onboarding:** ahli waris & guardian membuat inbox key dari wallet mereka dan mengirim invite bertanda tangan ke pemilik.
 2. **Setup:** pemilik menurunkan kunci liveness dari wallet → `sealCapsuleKit` (rahasia → DEK → Shamir → HPKE ke tiap pemegang, salt per pemegang) → `create_capsule` (commitment + komitmen anggota + `share_hashes` + proof-of-possession), dibayar fee payer terpisah → kit dibagikan off-chain; dari kit itulah ahli waris dan guardian mengenal kapsulnya.
 3. **Alive:** pemilik `heartbeat` tiap interval (Schnorr PoK berumur 10 menit, di-relay fee payer mana pun) → timer reset; tidak ada wallet/identitas pemilik maupun keluarganya di transaksi.
+   - **Berubah pikiran:** kapan pun sebelum `Claimed`, pemilik menyegel ulang (invite yang sama atau baru, rahasia dimasukkan lagi) → kit baru → `update_capsule` dengan bukti atas config baru. Komitmen dan hash share lama hilang dari chain, sehingga kit lama tidak lagi lolos `verifyKit` dan guardian menolak me-release darinya. Batas jujur: share yang sudah dibagikan tidak bisa ditarik; k pemegang lama yang berkolusi tetap bisa membuka payload lama secara offline (R19), jadi pindahkan dananya bila mengeluarkan orang yang tidak lagi dipercaya.
 4. **Timeout:** pemilik berhenti heartbeat → siapa pun `trigger_claim` → grace period berjalan (pemilik masih bisa membatalkan dengan heartbeat).
 5. **Guardian:** kuorum `guardian_confirm(slot, salt)` (atau `guardian_veto` kalau false-trigger); di sinilah guardian itu pertama kali terlihat on-chain.
 6. **Claim:** ahli waris `claim(salt)` → status `Claimed`, wallet ahli waris tercatat.
@@ -174,6 +176,8 @@ Urutan "release hanya setelah `Claimed`" adalah janji guardian yang dijalankan c
 | Server mati (single point of failure) | Tidak ada server: program on-chain + kit dipegang para pihak. |
 | Share bocor | Share dienkripsi HPKE ke pemegangnya; < k share = nol informasi (Shamir). |
 | Double-claim | State `Claimed` terminal. |
+| Pihak yang memegang `x` (tanda tangan keygen yang dicuri) menyegel ulang kapsul ke keluarganya sendiri | Tidak mendapat apa pun: rahasia ada di kit lama, yang share-nya dipegang keluarga asli; kit lama gagal `verifyKit` terhadap chain baru → guardian menolak release. Dampaknya sama dengan heartbeat palsu: pewarisan tertahan (R9). |
+| Relayer mengubah atau memutar ulang update | Bukti mengikat seluruh config, nonce dan masa berlaku: config lain → bukti gagal; setelah dipakai nonce naik → replay gagal. |
 
 ---
 
@@ -194,3 +198,4 @@ Urutan "release hanya setelah `Claimed`" adalah janji guardian yang dijalankan c
 4. **M4 — E2E:** deploy devnet, simulasi "kematian" (stop heartbeat) → klaim sukses. ✅ (browser, localnet + devnet)
 5. **M5 — Pitch:** deck + 2 video (pitch + demo). Deck ✅, video oleh founder.
 6. **M6 — Protokol v2:** roster tersegel + bukti heartbeat berumur pendek (SIK-19/20). ✅
+7. **M7 — Protokol v2.1:** `update_capsule`, pemilik mengganti ahli waris, guardian, kuorum dan timer dengan bukti saja. ✅

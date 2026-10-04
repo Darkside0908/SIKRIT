@@ -64,8 +64,9 @@ Catatan build:
 
 ## Devnet
 
-Program ter-deploy di devnet sejak 1 Okt 2026, di-upgrade ke protokol v2 pada 2 Okt 2026 (slot 506354888; byte on-chain =
-`target/deploy/sikrit.so`, sha256 `aa574a1d…`; IDL on-chain = `target/idl/sikrit.json`):
+Program ter-deploy di devnet sejak 1 Okt 2026, di-upgrade ke protokol v2 pada 2 Okt 2026 (slot 506354888) dan ke
+protokol v2.1 (`update_capsule`) pada 4 Okt 2026 (slot 507248087; byte on-chain = `target/deploy/sikrit.so`, sha256
+`f79790ae…`; IDL on-chain = `target/idl/sikrit.json`):
 [`FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F`](https://explorer.solana.com/address/FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F?cluster=devnet)
 (ProgramData `9W3hXq1MCz8ZKL7D9o3Do6xWb5aYUa3kNsK6TzUs42Jp`, ruang 480.000 byte untuk upgrade, upgrade authority
 `FNNYNGG688Y2wp2Nnb7K37ZsBTBF2HAFVFSxUh8iVd5N` — lihat R4 di security review). `solana config` global di mesin dev
@@ -106,6 +107,8 @@ solana-keygen new --no-bip39-passphrase --silent -o .keys/upgrade-buffer.json   
 (cd app && node scripts/write-buffer.mjs ../target/deploy/sikrit.so ../.keys/upgrade-buffer.json)
 solana program deploy -u devnet --keypair ~/.config/solana/id.json \
   --program-id FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F --buffer .keys/upgrade-buffer.json
+# writer terputus (mis. sesi habis)? jalankan ulang dengan keypair buffer yang sama: chunk yang sudah benar dilewati
+# (4 Okt 2026: 255 dari 405 chunk percobaan 3 Okt terpakai ulang; satu ronde lagi, lalu deploy dari buffer).
 # buffer yatim dari percobaan gagal (rent ~2 SOL masing-masing):
 solana program show -u devnet --buffers --keypair ~/.config/solana/id.json
 solana program close -u devnet --buffers --keypair ~/.config/solana/id.json

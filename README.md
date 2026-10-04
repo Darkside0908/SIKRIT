@@ -47,11 +47,12 @@ address is derived from `P = x·G`, not from a wallet, and the instruction needs
 it. The heir and the guardians are on-chain only as **salted commitments**, so nobody can find the capsule through
 the owner's family either: each member shows up only in the transaction where they act. Our end-to-end test plays a
 full inheritance in Chrome, on a local validator and on Solana devnet, then re-reads every capsule transaction:
-**the owner's wallet appears in 0 of 6**, the heir only in her claim, each confirming guardian only in their own
-confirmation, and the guardian who never acted in none. Check one devnet run yourself: capsule
-[`8q5t2g…TRKi`](https://explorer.solana.com/address/8q5t2gBnPHhNfqZhr6FqKU5WZZg3cNSYgMLSoeksTRKi?cluster=devnet)
-went from creation to a completed claim, and its owner's wallet
-[`6Y9jCP…VfWg`](https://explorer.solana.com/address/6Y9jCPnz5yUnE1KiNLYosJ5ye793RnxLkQERaUDpVfWg?cluster=devnet)
+**the owner's wallet appears in 0 of 7**, the heir only in her claim, each confirming guardian only in their own
+confirmation, and the guardian the owner removed in none, not even in the update that took them off the roster. Check one devnet
+run yourself: capsule
+[`GqAtC8…mgqq`](https://explorer.solana.com/address/GqAtC8QKMQ4VSD4ShCfdgQ5AXp9oc1UphVefvRazmgqq?cluster=devnet)
+went from creation through a re-seal to a completed claim, and its owner's wallet
+[`5623ce…bj45`](https://explorer.solana.com/address/5623ce5pPdXMdB1zCZk9RvWYeN3WatV2h9HDhLRFbj45?cluster=devnet)
 (a demo persona) has never touched the chain at all.
 
 <p align="center"><img src="docs/screenshots/inspector.webp" alt="What the chain sees: relayer, capsule and program accounts, 80 bytes of proof data (R, s and the proof's expiry); the owner's wallet and every family wallet are stamped NOT PRESENT" width="92%" /></p>
@@ -71,13 +72,17 @@ went from creation to a completed claim, and its owner's wallet
    one veto per heartbeat. Guardians confirm by opening their commitment with the salt from their kit. After the
    grace period and a guardian quorum, the heir claims the same way. Only then do guardians re-seal their shares to
    the inbox the committed heir certified, and the secret reassembles in the heir's browser.
+4. **Change your mind.** Until the claim, the owner can re-seal the secret for a new heir, new guardians, quorum or
+   timers. `update_capsule` carries one Schnorr proof over the whole new configuration (`SIKRIT:update:v1`, with the
+   same nonce and expiry as a heartbeat), so it needs no wallet either and a relayer can neither alter nor replay it.
+   The old commitments and share hashes leave the chain, and guardians refuse to release from the old kit.
 
 ```mermaid
 stateDiagram-v2
     [*] --> Active: create_capsule (proof of possession)
-    Active --> Active: heartbeat (ZK proof, nonce + 1)
+    Active --> Active: heartbeat (ZK proof, nonce + 1), or update_capsule (new roster and rules)
     Active --> ClaimPending: trigger_claim (anyone, after the interval)
-    ClaimPending --> Active: heartbeat, or guardian_veto (during grace)
+    ClaimPending --> Active: heartbeat, update_capsule, or guardian_veto (during grace)
     ClaimPending --> ClaimPending: guardian_confirm
     ClaimPending --> Claimed: claim (heir opens its commitment, after grace + quorum)
     Claimed --> [*]: guardians release shares off-chain → heir recovers
@@ -97,12 +102,12 @@ stateDiagram-v2
 
 | | |
 |---|---|
-| Heartbeat verification | **41,444 CU** on devnet, expiry check included (curve25519 syscalls; a pure-Rust verifier exceeded 1.4 M CU) |
-| `create_capsule` / other instructions | ~70k CU / ~7.5–8.3k CU |
+| Heartbeat verification | **41,417 CU** on devnet, expiry check included (curve25519 syscalls; a pure-Rust verifier exceeded 1.4 M CU) |
+| `create_capsule` / `update_capsule` / the rest | ~66–77k / ~60k / ~6.8–8.3k CU |
 | Cost of a heartbeat | 5,000 lamports. 30 years of weekly heartbeats ≈ **0.0078 SOL**. No token |
-| Owner wallets in capsule transactions | **0 of 6**, checked on-chain by the E2E test |
+| Owner wallets in capsule transactions | **0 of 7**, checked on-chain by the E2E test |
 | Family wallets on-chain before they act | **0**: heir only in her claim, guardians only in their own confirmation |
-| Tests | 73 TypeScript (LiteSVM lifecycle + SDK + client + relayer) · 12 Rust unit · 12-step browser E2E on localnet and devnet |
+| Tests | 79 TypeScript (LiteSVM lifecycle + SDK + client + relayer) · 14 Rust unit · 13-step browser E2E on localnet and devnet |
 
 ## Try it locally (~5 minutes)
 
@@ -124,7 +129,7 @@ it deploys as a serverless function (set `RELAYER_SECRET_KEY` to a funded devnet
 instructions, as fee payer and as a new capsule's rent payer, so its key can't be used to move its SOL anywhere else.
 
 ```bash
-npm test                # 73 tests: lifecycle on the real SBF binary with a time-travelling clock, SDK vectors, client, relayer
+npm test                # 79 tests: lifecycle on the real SBF binary with a time-travelling clock, SDK vectors, client, relayer
 npm run test:rust       # verifier unit tests, incl. a known-answer vector shared with the TypeScript prover
 npm run typecheck
 ```
@@ -167,6 +172,8 @@ What is public by design, and stated in the pitch:
   heir's recovery path (R15). The create wizard warns about it.
 - Guardians releasing only after `Claimed` is enforced by the app and the guardian's honesty, not by cryptography
   (SIK-11). X25519/Ed25519 are not post-quantum (R10).
+- Re-sealing revokes roles on-chain, not shares already handed out: enough former holders together could still open
+  the old kit (R19). Remove someone you no longer trust, and move the funds too. The update screen says so.
 
 ## Status
 
@@ -175,7 +182,8 @@ What is public by design, and stated in the pitch:
 - [x] Demo app (create → heartbeat → claim → guardian release → recovery), browser E2E
 - [x] Static hosting ready (GitHub Pages workflow, `app/vercel.json`)
 - [x] Protocol v2: sealed heir/guardian roster, heartbeat proofs that expire within the hour
-- [x] Program live on devnet, protocol v2 since 2 Oct 2026: [`FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F`](https://explorer.solana.com/address/FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F?cluster=devnet)
+- [x] Protocol v2.1: the owner changes heir, guardians, quorum and timers with one proof (`update_capsule`)
+- [x] Program live on devnet, protocol v2.1 since 4 Oct 2026: [`FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F`](https://explorer.solana.com/address/FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F?cluster=devnet)
   (deployed bytes identical to `anchor build`; the full demo story passes against it with `cd app && npm run e2e:devnet`)
 - [ ] Live demo URL ⟨…⟩
 

@@ -43,7 +43,8 @@ Alternative (≤ 60 chars): *Private proof-of-life inheritance for self-custody.
 >    separated, bound to a counter and a ten-minute expiry, so each proof works once and cannot be held back). The
 >    Anchor program verifies it with Solana's curve25519 syscalls in ~41k CU. The capsule address derives from the
 >    proof key, not a wallet, and any relayer can submit the proof. Our end-to-end test replays a full inheritance on
->    Solana devnet and finds the owner's wallet in 0 of 6 transactions, and each family member only where they act.
+>    Solana devnet and finds the owner's wallet in 0 of 7 transactions, and each family member only where they act.
+>    The same kind of proof, bound to a new configuration, lets the owner change heir, guardians or timers later.
 > 3. **Release.** After a missed interval anyone can open a claim; a heartbeat cancels it and guardians can veto a
 >    false alarm. After the grace period and a guardian quorum, the heir claims, guardians release their shares to
 >    the heir's certified inbox, and the secret reassembles in the heir's browser.
@@ -88,7 +89,7 @@ the form asks⟩.
 | GitHub repository | ⟨`https://github.com/⟨username⟩/SIKRIT`⟩ — public, MIT |
 | Live demo | ⟨Vercel URL⟩ — devnet; fees paid by the relayer service, so visitors need no wallet and no test SOL · local demo: `cd app && npm run localnet` |
 | Program (devnet) | [`FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F`](https://explorer.solana.com/address/FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F?cluster=devnet) |
-| A full inheritance on devnet (protocol v2) | capsule [`8q5t2gBnPHhNfqZhr6FqKU5WZZg3cNSYgMLSoeksTRKi`](https://explorer.solana.com/address/8q5t2gBnPHhNfqZhr6FqKU5WZZg3cNSYgMLSoeksTRKi?cluster=devnet): 6 transactions (create → heartbeat → trigger → 2 confirms → claim), all paid by the relayer; its owner's wallet `6Y9jCPnz5yUnE1KiNLYosJ5ye793RnxLkQERaUDpVfWg` has never been on-chain; the heir signs only her claim and each guardian only their own confirmation |
+| A full inheritance on devnet (protocol v2.1) | capsule [`GqAtC8QKMQ4VSD4ShCfdgQ5AXp9oc1UphVefvRazmgqq`](https://explorer.solana.com/address/GqAtC8QKMQ4VSD4ShCfdgQ5AXp9oc1UphVefvRazmgqq?cluster=devnet): 7 transactions (create → heartbeat → update, a re-seal without one guardian → trigger → 2 confirms → claim), all paid by the relayer service; its owner's wallet `5623ce5pPdXMdB1zCZk9RvWYeN3WatV2h9HDhLRFbj45` has never been on-chain; the heir signs only her claim, each guardian only their own confirmation, and the removed guardian appears nowhere |
 | Presentation video (2–3 min) | ⟨YouTube/Loom link⟩ — script: `docs/VIDEO-SCRIPT.md` §1 |
 | Product demo video (≤ 3 min) | ⟨YouTube/Loom link⟩ — script: `docs/VIDEO-SCRIPT.md` §2 |
 | Pitch deck (PDF) | `docs/deck/SIKRIT-deck.pdf` (source `docs/deck/index.html`) |
@@ -157,9 +158,9 @@ Results — fill in with real answers only:
 
 ## 10. Final checklist (Bang Igan)
 
-- [ ] Registered on colosseum.com for **Crypto World's Fair** (every team member)
+- [x] Registered on colosseum.com for **Crypto World's Fair** (every team member) — confirmation email 29 Sep 2026
 - [ ] Repo pushed and **public**; README renders; `LICENSE` present
-- [x] Program deployed to devnet; program ID + explorer link in README (`docs/` mentions updated) — done 1 Oct by the loop; upgraded to protocol v2 on 2 Oct (same program ID)
+- [x] Program deployed to devnet; program ID + explorer link in README (`docs/` mentions updated) — done 1 Oct by the loop; upgraded to protocol v2 on 2 Oct and v2.1 (`update_capsule`) on 4 Oct (same program ID)
 - [ ] Live demo URL works (Vercel, with `RELAYER_SECRET_KEY` set — see PROGRESS.md "BUTUH BANG IGAN"): create a capsule as Pak Arif without any wallet
 - [ ] Pitch video (≤ 3:00) and demo video (≤ 3:00) uploaded (unlisted is fine); links pasted above and in the form
 - [ ] Deck PDF regenerated if anything changed (`cd app && npm run deck`)

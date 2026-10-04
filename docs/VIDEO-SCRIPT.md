@@ -26,7 +26,7 @@ the opening and closing lines. Slide numbers refer to the deck. ~370 words ≈ 2
 | 2:10 | 9 · Business | "The protocol stays open source and has no token. We earn around it: an inheritance tab for Solana wallets built on our SDK, a watcher that warns you the moment a claim opens, and notaries as professional guardians, which is how wills already work in Indonesia. We start at home and grow through wallets." |
 | 2:30 | 10 · Close (founder on camera) | "I study how secrets fail, so I built one that fails safely. Prove you're alive. Reveal nothing else." |
 
-**Must-say facts (keep the numbers exact):** 11 protocols reviewed · 0 of 6 transactions · 41,444 CU (say "41
+**Must-say facts (keep the numbers exact):** 11 protocols reviewed · 0 of 7 transactions · 41,417 CU (say "41
 thousand") · 0.0078 SOL for 30 years · 22.93 M investors (say "almost 23 million") · no token.
 
 **Do not say:** "first ZK heartbeat on Solana" (DeathClock already uses Groth16), "nobody can see when you check in"
@@ -60,6 +60,13 @@ form: its default is 3).
 | 2:27 | Heir | **Unseal the secret** → hold **Hold to reveal** | "Sari's browser checks every share against the hashes on-chain and rebuilds the seed phrase. It was never on a server, and never on the chain." |
 | 2:40 | Public capsule page | Scroll the public record | "Everything the world can learn about this capsule. No owner, and no Rizal, the guardian who never acted. Prove you're alive — reveal nothing else." |
 | 2:50 | End card | Logo + repo URL | — |
+
+**Optional beat, "families change" (+12 s; only if the cut stays ≤ 2:55, e.g. by trimming the 1:08 line).** Right after
+the heartbeat: **Change heir, guardians or rules** → clear Rizal's invite → quorum **2** → **Use a sample seed phrase** →
+**Re-seal and update** → inspector `update_capsule`. Voice-over: *"Families change. Rizal moved abroad, so Pak Arif
+re-seals for Budi and Dewi alone: new shares, a new kit, one more proof. Still no wallet, and the chain never learns who left."*
+With this beat, at 1:42 say "Both guardians confirm" (2 of 2), and at 2:40 "No owner, and no Rizal: removed without
+ever appearing on-chain." The automatic B-roll below plays this beat too.
 
 **Automatic B-roll (backup):** `RECORD_DIR=/tmp/rec SLOWMO=450 npm run e2e` (in `app/`, needs `ffmpeg` on PATH; or
 `npm run e2e:devnet` with the same variables for footage on devnet through the relayer service, ~0.004 SOL)

@@ -10,7 +10,7 @@ no signer, so none of them needs anyone's permission.
 
 | File | What it gives you |
 |---|---|
-| [`liveness.ts`](liveness.ts) | liveness key from a wallet signature, Schnorr proofs (heartbeat, registration), member commitments, capsule address |
+| [`liveness.ts`](liveness.ts) | liveness key from a wallet signature, Schnorr proofs (heartbeat, registration, update), member commitments, capsule address |
 | [`kit.ts`](kit.ts) | inbox keys and invites, sealing a secret for the heir and guardians, checking a kit against the chain, release, recovery, JSON encoding |
 | [`client.ts`](client.ts) | instruction builders, account decoder, program error names, `timeline()` |
 | [`hpke.ts`](hpke.ts), [`shamir.ts`](shamir.ts) | the primitives underneath: HPKE RFC 9180 base mode, Shamir over GF(2^8) |
@@ -87,6 +87,39 @@ const file = kit.encodeKit(sealed);                         // JSON for the heir
 someone else's P or change its rules. Share 0 goes to the heir and share 1 + g to guardian g. The heir alone holds
 less than the threshold and learns nothing until guardians release their shares.
 
+## Owner: change the heir, guardians or rules
+
+```ts
+import { updateCapsuleIx } from "./sdk/client";
+
+// Same P, same address. Re-seal for whoever should hold a share now: a fresh key, fresh shares, fresh salts.
+const resealed = await kit.sealCapsuleKit({
+  secret: new TextEncoder().encode(seedPhrase),
+  commitment: P,
+  heir: newHeir,
+  guardians: newGuardians,
+  threshold: 2,
+});
+const next = kit.rosterCommitments(resealed);
+const newConfig = {
+  ...config,
+  heirCommitment: next.heir,
+  guardianCommitments: next.guardians,
+  guardianThreshold: 1,                                     // = threshold − 1
+  shareHashes: resealed.shareHashes,
+};
+
+// Proven like a heartbeat, over the whole new config: no signer, and a relayer can neither alter nor replay it.
+const current = await fetchCapsule(connection, capsule);
+const updateProof = liveness.proveUpdate(x, PROGRAM_ID, capsule, current!.heartbeatNonce, expiresAt, newConfig);
+const update = updateCapsuleIx({ capsule, config: newConfig, proof: updateProof, expiresAt });
+```
+
+An update counts as a heartbeat (it also cancels a pending claim) and is refused once the capsule is claimed. The old
+kit no longer matches the chain, so `verifyKit` and `releaseShare` reject it: send the new file to everyone who holds a
+share. Shares already handed out cannot be taken back, though. If you remove someone you no longer trust, move the
+funds behind the secret as well (R19).
+
 ## Guardian: confirm, then release
 
 ```ts
@@ -151,6 +184,7 @@ tag authenticates the result. A wrong share fails with a clear error instead of 
 |---|---|
 | Heartbeat challenge: `SHA-512("SIKRIT:liveness:v2" ‖ program ‖ capsule ‖ P ‖ R ‖ nonce u64 LE ‖ expires_at i64 LE) mod ℓ` | known-answer vector shared by `tests/sikrit.ts` and the Rust unit tests |
 | Registration challenge: `"SIKRIT:register:v2"`, context = Borsh(`CapsuleConfig`) | same |
+| Update challenge: `"SIKRIT:update:v1"`, context = nonce u64 LE ‖ expires_at i64 LE ‖ Borsh(`CapsuleConfig`) | a second known-answer vector, same tests |
 | Member commitment: `SHA-256("SIKRIT:member:v1" ‖ P ‖ role ‖ wallet ‖ salt)`, role 0 heir, 1 guardian | vector recomputed with Python `hashlib`, in TS and Rust tests |
 | Kit v2: payload, share, release, share-hash and inbox domains (`SIKRIT:*:v1`) | vectors in `tests/sdk.ts`; HPKE also against RFC 9180 A.2.1 |
 
