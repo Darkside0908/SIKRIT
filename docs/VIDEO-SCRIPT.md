@@ -70,9 +70,9 @@ ever appearing on-chain." The automatic B-roll below plays this beat too.
 
 **Automatic B-roll (backup):** `RECORD_DIR=/tmp/rec SLOWMO=450 npm run e2e` (in `app/`, needs `ffmpeg` on PATH; or
 `npm run e2e:devnet` with the same variables for footage on devnet through the relayer service, ~0.004 SOL)
-plays the whole story by itself and writes `/tmp/rec/demo-flow.mp4`: 1440 × 900, ~66 s, the two 60-second waits already
+plays the whole story by itself and writes `/tmp/rec/demo-flow.mp4`: 1440 × 900, ~71 s, the two 60-second waits already
 cut out, key screens held for a few seconds. There is no mouse cursor, so use it under a voice-over or as cut-aways. A
-copy from 1 Oct is in `app/e2e/out/demo-flow-broll.mp4` (gitignored, regenerate any time).
+copy from 4 Oct, with the re-seal beat, is in `app/e2e/out/demo-flow-broll.mp4` (gitignored, regenerate any time).
 
 ---
 
