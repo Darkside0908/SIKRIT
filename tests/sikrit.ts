@@ -27,9 +27,11 @@ import { Readable } from "stream";
 import { FailedTransactionMetadata, LiteSVM, TransactionMetadata } from "litesvm";
 
 import * as relayService from "../app/api/relay";
+import { parseArgs as parseWatcherArgs } from "../scripts/watcher";
 import * as client from "../sdk/client";
 import * as kit from "../sdk/kit";
 import * as liveness from "../sdk/liveness";
+import * as watch from "../sdk/watch";
 import idl from "../target/idl/sikrit.json";
 import type { Sikrit } from "../target/types/sikrit";
 
@@ -641,6 +643,106 @@ describe("SIKRIT — privacy-preserving dead man's switch", () => {
       expect(found[0].capsule?.status).to.equal("active");
       expect(found.slice(1).every(({ address, capsule }) => address.equals(missing) && capsule === null)).to.equal(true);
       await expectRejection(client.fetchCapsules(rpc, [foreign]), /not owned by the SIKRIT program/);
+    });
+  });
+
+  describe("watcher (sdk/watch.ts) — alerts without telling anyone which capsule", () => {
+    it("scans every capsule with one request that names none of them, and skips what is not a capsule", async () => {
+      const { capsule: a } = await h.newCapsule();
+      const { capsule: b } = await h.newCapsule({ guardians: 5, threshold: 3 });
+      // Program-owned decoys: a capsule from the older protocol (shorter) and a full-size account of another kind.
+      const real = h.svm.getAccount(a.address)!;
+      const [legacy, foreign] = [Keypair.generate().publicKey, Keypair.generate().publicKey];
+      h.svm.setAccount(legacy, { ...real, data: Uint8Array.from(real.data).subarray(0, client.CAPSULE_ACCOUNT_SIZE - 32) });
+      h.svm.setAccount(foreign, { ...real, data: new Uint8Array(client.CAPSULE_ACCOUNT_SIZE) });
+
+      const requests: { programId: PublicKey; config: GetProgramAccountsConfig }[] = [];
+      const rpc = {
+        // What an RPC node does with the filters, over every account the program owns here.
+        async getProgramAccounts(programId: PublicKey, config: GetProgramAccountsConfig) {
+          requests.push({ programId, config });
+          return [a.address, b.address, legacy, foreign].flatMap((pubkey) => {
+            const account = h.svm.getAccount(pubkey)!;
+            const data = Buffer.from(account.data);
+            const kept = (config.filters ?? []).every((filter) => {
+              if ("dataSize" in filter) return data.length === filter.dataSize;
+              expect(filter.memcmp.encoding).to.equal("base64");
+              const bytes = Buffer.from(filter.memcmp.bytes, "base64");
+              return data.subarray(filter.memcmp.offset, filter.memcmp.offset + bytes.length).equals(bytes);
+            });
+            return kept ? [{ pubkey, account: { ...account, data } }] : [];
+          });
+        },
+      } as unknown as Connection;
+
+      const capsules = await watch.scanCapsules(rpc);
+      expect([...capsules.keys()].sort()).to.deep.equal([a.address.toBase58(), b.address.toBase58()].sort());
+      expect(capsules.get(b.address.toBase58())).to.include({ status: "active", guardianThreshold: 3 });
+      expect(capsules.get(b.address.toBase58())!.guardianCommitments).to.have.length(5);
+      // One request, and nothing in it is specific to a capsule: the same filters match every capsule alike.
+      expect(requests).to.have.length(1);
+      expect(requests[0].programId.equals(PROGRAM_ID)).to.equal(true);
+      expect(requests[0].config.filters).to.deep.equal([
+        { dataSize: client.CAPSULE_ACCOUNT_SIZE },
+        { memcmp: { offset: 0, bytes: Buffer.from(client.DISCRIMINATORS.capsuleAccount).toString("base64"), encoding: "base64" } },
+      ]);
+    });
+
+    it("alerts once per liveness epoch and once per claim, from the first reminder to the claim", async () => {
+      const { capsule, result } = await h.newCapsule({ interval: DAY, grace: DAY, threshold: 2 });
+      expectSuccess(result);
+      const state = () => client.decodeCapsule(Uint8Array.from(h.svm.getAccount(capsule.address)!.data));
+      const fired = new Set<string>();
+      const texts: string[] = [];
+      /** One scan of a polling watcher: the kinds of the alerts it has not sent before. */
+      const scan = () => {
+        const fresh = watch.checkCapsule(state(), h.now(), { remindBefore: 3600n }).filter((alert) => !fired.has(alert.key));
+        fresh.forEach((alert) => (fired.add(alert.key), texts.push(alert.text)));
+        return fresh.map((alert) => alert.kind);
+      };
+
+      expect(scan()).to.deep.equal([]); // a fresh capsule: nothing to say
+      h.warp(DAY - 3599);
+      expect(scan()).to.deep.equal(["heartbeat-due"]);
+      expect(scan()).to.deep.equal([]); // said once
+      h.warp(3599);
+      expect(scan()).to.deep.equal(["heartbeat-overdue"]);
+      expectSuccess(await h.triggerClaim(capsule));
+      expect(scan()).to.deep.equal(["claim-open"]);
+      expect(watch.checkCapsule(state(), h.now())[0]).to.include({ urgent: true });
+
+      expectSuccess(await h.heartbeat(capsule)); // the owner is alive: claim cancelled, a new epoch begins
+      expect(scan()).to.deep.equal([]);
+      h.warp(DAY);
+      expect(scan()).to.deep.equal(["heartbeat-overdue"]); // the new epoch alerts again
+      expectSuccess(await h.triggerClaim(capsule));
+      expect(scan()).to.deep.equal(["claim-open"]); // and so does the new claim
+      h.warp(DAY); // grace over, but no quorum yet: nothing new, and the open claim says so
+      expect(scan()).to.deep.equal([]);
+      expect(watch.checkCapsule(state(), h.now()).map((alert) => alert.text).join()).to.match(/grace period ended .* 0 of 2 guardian approvals/);
+      for (const guardian of capsule.guardians.slice(0, 2)) expectSuccess(await h.guardianConfirm(capsule, guardian));
+      expect(scan()).to.deep.equal(["claimable"]);
+      expectSuccess(await h.claim(capsule));
+      expect(scan()).to.deep.equal(["claimed"]);
+      expect(watch.checkCapsule(undefined, h.now()).map((alert) => alert.kind)).to.deep.equal(["missing"]);
+
+      // Alert text can go to a push service: it names no capsule, key or member.
+      const names = [capsule.address.toBase58(), bytesToHex(capsule.commitment), capsule.heir.publicKey.toBase58()];
+      for (const text of texts) for (const name of names) expect(text).to.not.include(name);
+      expect([59n, 3600n, 3660n, 90_061n].map(watch.duration)).to.deep.equal(["59 s", "1 h", "1 h 1 min", "1 d 1 h"]);
+    });
+
+    it("parses the watcher's command line and refuses what it cannot use", () => {
+      const address = Keypair.generate().publicKey;
+      const args = parseWatcherArgs([address.toBase58(), "--rpc", "http://127.0.0.1:8899", "--every", "60", "--remind", "3600", "--notify", "https://ntfy.sh/a-secret-topic", "--once"]);
+      expect(args.capsules.map(String)).to.deep.equal([address.toBase58()]);
+      expect(args).to.include({ rpc: "http://127.0.0.1:8899", every: 60, remind: 3600n, notify: "https://ntfy.sh/a-secret-topic", once: true });
+      expect(parseWatcherArgs([address.toBase58()])).to.include({ rpc: "https://api.devnet.solana.com", every: 300, remind: 86_400n, once: false });
+      expect(() => parseWatcherArgs([])).to.throw(/at least one capsule/);
+      expect(() => parseWatcherArgs([address.toBase58(), "--every", "0"])).to.throw(/positive whole number/);
+      expect(() => parseWatcherArgs([address.toBase58(), "--notify", "not a url"])).to.throw();
+      expect(() => parseWatcherArgs([address.toBase58(), "--bogus"])).to.throw(/unknown option/);
+      expect(() => parseWatcherArgs(["not-a-capsule"])).to.throw();
     });
   });
 

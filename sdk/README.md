@@ -13,6 +13,7 @@ no signer, so none of them needs anyone's permission.
 | [`liveness.ts`](liveness.ts) | liveness key from a wallet signature, Schnorr proofs (heartbeat, registration, update), member commitments, capsule address |
 | [`kit.ts`](kit.ts) | inbox keys and invites, sealing a secret for the heir and guardians, checking a kit against the chain, release, recovery, JSON encoding |
 | [`client.ts`](client.ts) | instruction builders, account decoder, program error names, `timeline()` |
+| [`watch.ts`](watch.ts) | alerts for a capsule (heartbeat due, claim open, claimed) from a scan of every capsule, so the RPC never learns which one is yours |
 | [`hpke.ts`](hpke.ts), [`shamir.ts`](shamir.ts) | the primitives underneath: HPKE RFC 9180 base mode, Shamir over GF(2^8) |
 
 The snippets below follow one capsule from setup to recovery. The same flow runs as a test, with real transactions on
@@ -172,10 +173,25 @@ tag authenticates the result. A wrong share fails with a clear error instead of 
   instruction per transaction, with exactly that instruction's accounts, and the relayer only as fee payer or as the
   rent payer of `create_capsule`. That policy leaves it nothing to sign except SIKRIT fees, at most two signatures'
   worth per transaction (the program ignores extra accounts, so a relayer that accepted them would pay for padding).
-- **Watcher.** `fetchCapsule` + `timeline(capsule, now)` give `canTrigger`, `canVeto`, `canClaim` and the deadlines.
-  An owner's watcher that sees a pending claim should alert them while a heartbeat can still cancel it. The program
-  also emits Anchor events: `CapsuleCreated`, `HeartbeatVerified`, `CapsuleUpdated`, `ClaimTriggered`,
-  `GuardianConfirmed`, `ClaimVetoed`, `CapsuleClaimed`.
+- **Watcher.** An owner who misses a heartbeat must hear about the claim while a heartbeat can still cancel it. But
+  polling one capsule tells the RPC which capsule you care about, so the watcher reads all of them and picks yours
+  locally. `npm run watcher -- <capsule>… [--notify <ntfy topic or webhook URL>]` runs it in a loop
+  ([`scripts/watcher.ts`](../scripts/watcher.ts)); each alert fires once per liveness epoch or claim, and its text
+  names no capsule. For a dashboard that already knows its capsule, `fetchCapsule` + `timeline(capsule, now)` give
+  `canTrigger`, `canVeto`, `canClaim` and the deadlines. The program also emits Anchor events: `CapsuleCreated`,
+  `HeartbeatVerified`, `CapsuleUpdated`, `ClaimTriggered`, `GuardianConfirmed`, `ClaimVetoed`, `CapsuleClaimed`.
+
+```ts
+import { checkCapsule, scanCapsules } from "./sdk/watch";
+
+// One getProgramAccounts for every capsule, with filters that match all of them alike.
+const everyCapsule = await scanCapsules(connection);
+const nowOnChain = (await connection.getAccountInfo(SYSVAR_CLOCK_PUBKEY))!.data.readBigInt64LE(32);
+for (const alert of checkCapsule(everyCapsule.get(capsule.toBase58()), nowOnChain, { remindBefore: 86_400n })) {
+  notify(alert.key, alert.urgent, alert.text);              // send each key once; the text is safe for a push service
+}
+```
+
 - **Errors.** `explainError(e)` maps program error codes to names and messages (`PROGRAM_ERRORS`).
 
 ## Formats are pinned

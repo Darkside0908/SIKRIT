@@ -53,7 +53,9 @@ SIKRIT/
 │   ├── hpke.ts               <-- HPKE RFC 9180 (X25519/HKDF-SHA256/ChaCha20-Poly1305)
 │   ├── shamir.ts             <-- Wrapper Shamir GF(2^8) (library teraudit)
 │   ├── kit.ts                <-- Capsule kit: DEK + Shamir + HPKE ke inbox heir/guardian, release, recovery
-│   └── client.ts             <-- Client program ringan (instruksi, decoder, discovery), cocok byte-per-byte dgn Anchor
+│   ├── client.ts             <-- Client program ringan (instruksi, decoder, discovery), cocok byte-per-byte dgn Anchor
+│   └── watch.ts              <-- Watcher: scan semua kapsul, alert untuk kapsul sendiri (RPC tak tahu yang mana)
+├── scripts/watcher.ts        <-- `npm run watcher`: watcher sebagai perintah (loop / --once), push opsional ntfy/webhook
 ├── app/                      <-- Frontend demo Vite + React + Tailwind v4 + wallet adapter (import @sdk/*)
 │   ├── src/pages/            <-- Home, Owner (create + dashboard), Heir, Guardian, Capsule (public view)
 │   ├── api/relay.ts          <-- Relayer service (Vercel function; di-mount vite dev/preview): fee hanya untuk 1 instruksi SIKRIT
@@ -83,9 +85,10 @@ SIKRIT/
 ## ⚡ Next Priorities for Claude Code
 1. ~~Buat dan lengkapi `programs/sikrit/src/lib.rs` sesuai spesifikasi~~ ✅ (lihat `docs/SECURITY-REVIEW.md`)
 2. ~~Pastikan logika verifikasi ZK Schnorr proof bekerja di Rust~~ ✅ (syscall curve25519, ~41k CU)
-3. ~~Siapkan unit tests~~ ✅ (79 test TS: LiteSVM + SDK + client + relayer; 14 unit test Rust; E2E browser localnet + devnet)
+3. ~~Siapkan unit tests~~ ✅ (82 test TS: LiteSVM + SDK + client + relayer + watcher; 14 unit test Rust; E2E browser localnet + devnet)
 4. ~~Inisialisasi frontend dashboard untuk demo flow~~ ✅ (`app/`, E2E Chrome hijau; heartbeat dikirim relayer, bukan wallet pemilik)
 5. ~~M2: enkripsi share + custody share lewat guardian (SIK-11)~~ ✅ (`sdk/kit.ts`)
 6. ~~Deploy devnet~~ ✅ 1 Okt 2026 (`FJKqf…Tc45F`, byte on-chain = build lokal; `cd app && npm run e2e:devnet` hijau). Upgrade: lihat `docs/DEVELOPMENT.md` §Devnet (RPC publik 429 → `app/scripts/write-buffer.mjs`).
 7. ~~Protokol v2 (roster tersegel + bukti berumur pendek, SIK-19/20)~~ ✅ di devnet sejak 2 Okt 2026 (slot 506354888, IDL on-chain ikut di-upgrade).
 8. ~~Protokol v2.1 (`update_capsule`, pemilik mengganti ahli waris/guardian/aturan)~~ ✅ di devnet sejak 4 Okt 2026 (slot 507248087, sha256 `f79790ae…`, IDL ikut di-upgrade).
+9. ~~Watcher R8 (`npm run watcher`, `sdk/watch.ts`)~~ ✅ 4 Okt 2026: scan semua kapsul + cek lokal, push tanpa alamat (SECURITY-REVIEW §12). Tidak mengubah program.

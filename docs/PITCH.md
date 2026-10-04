@@ -97,7 +97,7 @@ kripto", atau bahwa waktu heartbeat tersembunyi (tidak).
 | Murah | Verifikasi heartbeat **41.417 CU** (diukur di devnet 4 Okt, termasuk cek masa berlaku); fee 5.000 lamport. Heartbeat mingguan 30 tahun ≈ **0,0078 SOL** |
 | Kriptografi benar | Transkrip Fiat–Shamir dikunci *known-answer vector* lintas bahasa (TS ↔ Rust); HPKE lolos vektor resmi RFC 9180; Shamir pakai library teraudit (Cure53 + Zellic) |
 | Aman | Self-audit 22 temuan (`docs/SECURITY-REVIEW.md`, program + SDK + app + relayer): replay, double-vote guardian, veto DoS, swap kunci inbox, roster keluarga yang menunjuk ke pemilik, bukti heartbeat tanpa masa berlaku, dst. — semua High/Critical sudah diperbaiki dan dites |
-| Bekerja end-to-end | 79 test (LiteSVM + SDK + client + relayer) + 14 unit test Rust + E2E browser 13 langkah, di validator lokal **dan di devnet**: seed phrase pulih identik di browser ahli waris |
+| Bekerja end-to-end | 82 test (LiteSVM + SDK + client + relayer + watcher) + 14 unit test Rust + E2E browser 13 langkah, di validator lokal **dan di devnet**: seed phrase pulih identik di browser ahli waris |
 
 ## 6. Bisnis & go-to-market *(rencana; belum ada pendapatan)*
 
@@ -108,7 +108,9 @@ sekitarnya, bukan dari spekulasi.
    `sdk/client.ts` + `sdk/kit.ts`, yang dependensinya ringan dan tidak butuh Anchor di browser. Wallet mendapat fitur
    retensi; SIKRIT mendapat distribusi + biaya integrasi/dukungan.
 2. **Watcher & relayer premium** (~$2–5/bulan). Pengingat heartbeat, **alarm saat klaim dibuka** (agar pemilik sempat
-   membatalkan, R8), relayer dengan SLA. Heartbeat tetap bisa dikirim siapa pun, jadi tidak ada lock-in.
+   membatalkan, R8), relayer dengan SLA. Watcher open-source (`npm run watcher`) sudah ada dan gratis untuk yang mau
+   menjalankannya sendiri; yang dijual adalah kenyamanan versi hosted. Heartbeat tetap bisa dikirim siapa pun, jadi
+   tidak ada lock-in.
 3. **Guardian profesional.** Notaris dan perencana waris sebagai guardian. Cocok dengan praktik **akta wasiat** di
    Indonesia: notaris bisa ikut mengonfirmasi klaim tanpa pernah bisa membuka rahasia sendirian.
 4. **Biaya release opsional** di program (versi berikutnya), dibayar sekali saat warisan benar-benar terjadi.
@@ -122,7 +124,7 @@ lewat komunitas kripto, kampus, dan notaris/perencana keuangan. Setelah itu peng
 
 | Kriteria (Rules §8) | Jawaban SIKRIT |
 |---|---|
-| **Functionality** | Program Anchor live di devnet + SDK + app berjalan end-to-end; 79 test + 14 unit test Rust + E2E browser (localnet & devnet); kode diaudit sendiri dengan temuan terdokumentasi |
+| **Functionality** | Program Anchor live di devnet + SDK + app berjalan end-to-end; 82 test + 14 unit test Rust + E2E browser (localnet & devnet); kode diaudit sendiri dengan temuan terdokumentasi |
 | **Potential Impact** | Jutaan BTC terkunci permanen; setiap pengguna self-custody butuh rencana waris; primitive privasi yang bisa dipakai ulang (*proof of liveness* tanpa identitas) |
 | **Novelty** | Heartbeat tanpa identitas: tidak ada di 11 proyek yang kami periksa. Bukti Schnorr diverifikasi dengan syscall curve25519 dalam 41k CU. Roster tersegel melengkapinya (Ethernal juga menyegel ahli waris, tapi pemiliknya tetap terlihat): pemilik **dan** keluarganya tidak terlihat sampai bertindak |
 | **UX** | Tanpa token, tanpa KYC, tanpa hardware khusus. Pemilik tidak perlu SOL dan tidak perlu backup kunci baru (diturunkan ulang dari wallet). Setup ±2 menit |
@@ -151,6 +153,11 @@ lewat komunitas kripto, kampus, dan notaris/perencana keuangan. Setelah itu peng
   dari chain, jadi guardian menolak me-release dari kit lama. Batas jujurnya: share yang sudah dibagikan tidak bisa
   ditarik; cukup banyak pemegang lama yang berkolusi tetap bisa membuka kit lama (R19). Kalau yang dikeluarkan orang
   yang tidak lagi dipercaya, pindahkan juga dananya.
+- **"What if the owner just forgets, and a claim opens?"** Grace period ada untuk itu, dan watcher open-source
+  (`npm run watcher`) mengingatkan sebelum heartbeat jatuh tempo dan membunyikan alarm saat klaim dibuka (push ke ntfy
+  atau webhook). Watcher mengunduh **semua** kapsul lalu memeriksa milik pemilik di mesinnya sendiri, jadi RPC tidak
+  tahu kapsul mana yang dipantau, dan teks alert tidak memuat alamat kapsul (layanan push hanya melihat kapan alert
+  terkirim, R8).
 - **"Isn't the relayer a central point?"** Heartbeat tidak butuh signer: siapa pun bisa me-relay, relayer tidak bisa
   memalsukan bukti, dan pemilik bisa memakai fee payer mana pun (asal bukan wallet-nya sendiri). Relayer yang menahan
   bukti juga tidak bisa menyimpannya untuk nanti: bukti kedaluwarsa dalam 10 menit (batas program 1 jam, SIK-20).
@@ -170,7 +177,8 @@ lewat komunitas kripto, kampus, dan notaris/perencana keuangan. Setelah itu peng
   heartbeat berumur pendek (SIK-20).
 - **Sudah (protokol v2.1, live di devnet sejak 4 Okt):** `update_capsule`, pemilik mengganti ahli waris, guardian,
   kuorum dan timer dengan satu bukti, tanpa wallet (R13 ikut teratasi selama pemilik hidup).
-- **v2.2 (pasca-hackathon):** watcher notifikasi, pengikatan origin pada pesan derivasi kunci (R9), dukungan Ledger
+- **Sudah (4 Okt):** watcher open-source yang tidak membocorkan kapsul mana yang dipantau (R8).
+- **v2.2 (pasca-hackathon):** alert di ponsel dari feed publik yang difilter di perangkat, pengikatan origin pada pesan derivasi kunci (R9), dukungan Ledger
   (R12), instruksi `close` (R7), deploy mainnet setelah audit eksternal.
 - **v3:** heartbeat dalam himpunan anonim (R1), kit "buta" yang menyimpan identitas keluarga di dalam amplop HPKE
   tiap pemegang (R3), KEM hibrida post-quantum X-Wing (R10), migrasi Anchor 1.x / SBPF v3 (R6), opsional NFT "surat

@@ -68,6 +68,9 @@ Alternative (≤ 60 chars): *Private proof-of-life inheritance for self-custody.
   Tailwind CSS 4.
 - **Relayer service** — `app/api/relay.ts`, a Vercel serverless function (also mounted by the dev server): pays the fee
   of single SIKRIT instructions, so the owner's wallet never signs or pays and visitors need no test SOL.
+- **Watcher** — `npm run watcher` (`sdk/watch.ts`): heartbeat reminders and an alarm when a claim opens, from one
+  `getProgramAccounts` per scan over every capsule, checked locally, so the RPC never learns which capsule is yours;
+  optional push through ntfy or any webhook, with no capsule address in the text.
 - **Testing** — LiteSVM (time-travel lifecycle tests on the real SBF binary), Mocha/Chai, Rust unit tests,
   Playwright-driven Chrome end-to-end test against `solana-test-validator` and, through the production bundle, against
   the devnet deployment (`cd app && npm run e2e:devnet`).
@@ -108,8 +111,8 @@ the form asks⟩.
 
 **Business model (paste).**
 > Open core with no token. The program and SDK stay open source. Revenue: (1) wallet integrations (integration and
-> support fees), (2) a watcher and relayer subscription (~$2–5/month: heartbeat reminders, an alarm the moment a claim
-> opens, relaying with an SLA; no lock-in, since anyone can relay), (3) professional guardian services with notaries,
+> support fees), (2) a hosted watcher and relayer subscription (~$2–5/month: heartbeat reminders, an alarm the moment
+> a claim opens, relaying with an SLA; no lock-in, since anyone can relay and the open-source watcher runs anywhere), (3) professional guardian services with notaries,
 > (4) an optional one-time release fee charged only when an inheritance actually happens.
 
 **Distribution plan (paste).**

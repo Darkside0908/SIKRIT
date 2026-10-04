@@ -107,7 +107,7 @@ stateDiagram-v2
 | Cost of a heartbeat | 5,000 lamports. 30 years of weekly heartbeats ≈ **0.0078 SOL**. No token |
 | Owner wallets in capsule transactions | **0 of 7**, checked on-chain by the E2E test |
 | Family wallets on-chain before they act | **0**: heir only in her claim, guardians only in their own confirmation |
-| Tests | 79 TypeScript (LiteSVM lifecycle + SDK + client + relayer) · 14 Rust unit · 13-step browser E2E on localnet and devnet |
+| Tests | 82 TypeScript (LiteSVM lifecycle + SDK + client + relayer + watcher) · 14 Rust unit · 13-step browser E2E on localnet and devnet |
 
 ## Try it locally (~5 minutes)
 
@@ -129,9 +129,17 @@ it deploys as a serverless function (set `RELAYER_SECRET_KEY` to a funded devnet
 instructions, as fee payer and as a new capsule's rent payer, so its key can't be used to move its SOL anywhere else.
 
 ```bash
-npm test                # 79 tests: lifecycle on the real SBF binary with a time-travelling clock, SDK vectors, client, relayer
+npm test                # 82 tests: lifecycle on the real SBF binary with a time-travelling clock, SDK vectors, client, relayer, watcher
 npm run test:rust       # verifier unit tests, incl. a known-answer vector shared with the TypeScript prover
 npm run typecheck
+```
+
+An owner who misses a heartbeat must hear about the claim in time to cancel it. The watcher scans **every** capsule
+and checks yours on your own machine, so the RPC never learns which capsule you care about; alerts can go to a push
+service (an ntfy topic or any webhook) and never contain the capsule's address:
+
+```bash
+npm run watcher -- <your capsule address> --notify https://ntfy.sh/<a hard-to-guess topic>   # add --once for cron
 ```
 
 ## Repository
@@ -143,10 +151,12 @@ sdk/hpke.ts                  HPKE RFC 9180 base mode (X25519, HKDF-SHA256, ChaCh
 sdk/shamir.ts                Shamir over GF(2^8), wrapping an audited library
 sdk/kit.ts                   capsule kit: seal, verify against the chain, release, recover
 sdk/client.ts                dependency-light program client (no Anchor in the browser)
+sdk/watch.ts                 watcher core: scan every capsule, alert on yours (heartbeat due, claim open, claimed)
 sdk/README.md                integration guide for wallets, relayers and watchers, one capsule end to end
 app/                         demo app: Vite + React + Tailwind + wallet adapter
 app/api/relay.ts             relayer service (Vercel function / dev server): pays fees for SIKRIT instructions only
 app/e2e/demo-flow.mjs        end-to-end test in Chrome + on-chain privacy check
+scripts/watcher.ts           `npm run watcher`: the watcher as a command, with optional push alerts
 tests/                       LiteSVM lifecycle tests, SDK tests (RFC 9180 and FIPS-197 vectors, attacks on the kit)
 docs/                        pitch, research, technical spec, security review, deck, video scripts, submission kit
 ```
@@ -183,11 +193,13 @@ What is public by design, and stated in the pitch:
 - [x] Static hosting ready (GitHub Pages workflow, `app/vercel.json`)
 - [x] Protocol v2: sealed heir/guardian roster, heartbeat proofs that expire within the hour
 - [x] Protocol v2.1: the owner changes heir, guardians, quorum and timers with one proof (`update_capsule`)
+- [x] Watcher: heartbeat reminders and an alarm when a claim opens, without telling the RPC which capsule is yours
 - [x] Program live on devnet, protocol v2.1 since 4 Oct 2026: [`FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F`](https://explorer.solana.com/address/FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F?cluster=devnet)
   (deployed bytes identical to `anchor build`; the full demo story passes against it with `cd app && npm run e2e:devnet`)
 - [ ] Live demo URL ⟨…⟩
 
-Roadmap: watcher alerts when a claim opens, origin-bound key derivation, Ledger support, external audit, then mainnet.
+Roadmap: phone alerts from a public feed filtered on the device, origin-bound key derivation, Ledger support, external
+audit, then mainnet.
 Later: heartbeats inside an anonymity set, a "blind" kit that hides the roster from a leaked file, a post-quantum
 hybrid KEM.
 

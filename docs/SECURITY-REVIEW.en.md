@@ -4,9 +4,9 @@
 > write-ups and original line references. **This is a self-audit, not an external audit.**
 >
 > **Scope:** the Anchor program (`programs/sikrit`, protocol v2.1), the client SDK (`sdk/`: Schnorr prover, HPKE,
-> Shamir, capsule kit, program client), the demo app (`app/`) and its relayer service (`app/api/relay.ts`).
+> Shamir, capsule kit, program client, watcher), the demo app (`app/`) and its relayer service (`app/api/relay.ts`).
 > **Dates:** 30 Sep – 4 Oct 2026. **Method:** manual review (cryptography and smart-contract security), real SBF
-> builds, 79 TypeScript tests (the lifecycle and relayer tests run the real SBF binary in LiteSVM with a
+> builds, 82 TypeScript tests (the lifecycle and relayer tests run the real SBF binary in LiteSVM with a
 > time-travelling clock), 14 Rust unit tests, a 13-step browser end-to-end run on a local validator and on devnet, and
 > compute-unit benchmarks.
 >
@@ -140,8 +140,11 @@ hashes). All fit the default 200k budget. On devnet (v2
 proof capsule `8q5t2g…TRKi`, 2 Oct 2026) the heartbeat took 41,444 CU and 5,000 lamports. On the v2.1 proof capsule
 `GqAtC8…mgqq` (4 Oct 2026): `create_capsule` 76,598 (PDA bump 250, so five failed address attempts at ~1,500 CU each),
 `heartbeat` 41,417, `update_capsule` 60,225, `trigger_claim` 6,827, `guardian_confirm` 7,276, `claim` 7,548. The last
-three ran ~740 CU cheaper than on 2 Oct while LiteSVM gives the new binary the same numbers as before: the devnet
-runtime changed, not the code.
+three ran ~740 CU cheaper than on 2 Oct because the re-seal left a smaller roster (2 guardians and 3 share hashes
+instead of 3 and 4); the heartbeat was sent before the re-seal, hence the same as on 2 Oct. Anchor (de)serializes the
+whole account in every instruction, so each guardian commitment or share hash adds ~370 CU: in LiteSVM, `trigger_claim`
+/ `guardian_confirm` / `claim` take 6,827 / 7,274 / 7,546 CU with 2 guardians and 3 share hashes, 7,568 / 8,015 / 8,287
+with 3 and 4, and 10,530 / 10,977 / 11,249 with the largest roster (5 and 10).
 
 ### Re-sealing: `update_capsule` (protocol v2.1, 3 Oct 2026)
 
@@ -179,7 +182,7 @@ Known-answer vectors: HPKE against RFC 9180 Appendix A.2.1 (key schedule, six en
 0–256, exported values); GF(2⁸) Shamir against a table-free reference anchored to FIPS-197 §4.2 (`{57}·{83} = {c1}`);
 inbox keys and share hashes recomputed independently with Python `hashlib`/`hmac` and pyca `cryptography`.
 
-## 4. Relayer service (`app/api/relay.ts`)
+## 4. Relayer service (`app/api/relay.ts`) and watcher (`scripts/watcher.ts`)
 
 The hosted devnet demo cannot depend on the public faucet, so a relayer service pays fees and new capsules' rent. It is
 also the "relayer" of the privacy story: the owner's heartbeats reach the chain with the service as the only fee payer.
@@ -198,6 +201,24 @@ The 1 Oct review found nothing in the released code; the 3 Oct re-audit found th
 tests drive the service against the real program in LiteSVM, including a whole relayed inheritance in which the heir
 and the guardian hold no SOL at all.
 
+### Watcher without a leak (4 Oct 2026)
+
+An owner who misses a heartbeat must learn about the claim while a heartbeat can still cancel it (R8). Polling one
+capsule would tell the RPC "this IP cares about capsule C", the very link SIKRIT hides. So every scan downloads **all**
+capsules with one `getProgramAccounts` whose filters (`dataSize` 637 and the account discriminator) match every capsule
+alike, and the owner's machine picks its own (`sdk/watch.ts`; design note in `docs/plans/2026-10-04-watcher-design.md`).
+Status and timers sit after variable-length vectors, so whole accounts are fetched (637 bytes; ~6 MB per scan at 10,000
+capsules). It is state-based: a missed scan is caught by the next one, and there are no logs for another program to
+spoof. Alerts (heartbeat due or overdue, claim open, claimable, claimed) fire once per liveness epoch or claim, and
+their text names no capsule, key or member, so it can go to a push service. The RPC learns that an IP runs a SIKRIT
+watcher, not which capsule; the push service learns when an alert fires.
+
+Tests: in LiteSVM, one scan request that names no capsule and skips other program accounts, and alerts that fire once
+each along a real lifecycle (due → overdue → claim → cancelled by a heartbeat → overdue → new claim → grace over without
+quorum → claimable → claimed). Live, on `solana-test-validator`: the watcher as its own process pushed exactly three
+alerts to a local HTTP sink (due, overdue, claim open; none with an address), then the owner's heartbeat cancelled the
+claim. `--once` against the public devnet RPC read both proof capsules as claimed.
+
 ## 5. Residual risks and limits
 
 | # | Risk | Notes and mitigation |
@@ -209,7 +230,7 @@ and the guardian hold no SOL at all.
 | R5 | Delay by malicious guardians | Bounded by `guardians × (interval + grace)`. |
 | R6 | Legacy toolchain | Anchor 0.30 emits SBPF v0. A pending feature gate (SIMD-0500, inactive on devnet and mainnet as of 30 Sep 2026; our devnet deploy on 1 Oct succeeded) would block new deploys of such binaries, not their execution. Plan: Anchor 1.x after the hackathon. |
 | R7 | Rent is not reclaimable | No `close` instruction; ~0.004–0.005 SOL per capsule stays locked (0.0039 SOL on devnet for the 637-byte account, 3 Oct 2026). |
-| R8 | Owner unaware of a trigger | Needs an off-chain watcher that alerts the owner during the grace period (roadmap). |
+| R8 | Owner unaware of a trigger | Mitigated since 4 Oct by the watcher (§4): `npm run watcher` scans every capsule and warns the owner (heartbeat due or overdue, claim open, claimable) without telling the RPC which capsule is theirs; optional push to ntfy or a webhook, never with the capsule's address. Residual: the owner has to run it on a machine that stays on, and a push service sees *when* an alert fires (on a quiet chain that time can be matched with a public `ClaimTriggered`; self-host the push server if that matters). |
 | R9 | Phishing of the key-derivation signature | A site that obtains the same signature could fake heartbeats (delay the inheritance) but cannot open the secret. Since v2.1 one `update_capsule` is enough to retire the family's kit (before, the attacker had to keep sending heartbeats): still availability, not disclosure, and a living owner can re-seal again. Mitigation: bind the app origin into the message (Sign-In-With-Solana style). |
 | R10 | Not post-quantum | X25519 and Ed25519. Kits are not stored on public permanent storage (only hashes on-chain), limiting harvest-now-decrypt-later. Roadmap: X-Wing hybrid KEM; the kit format is versioned. |
 | R11 | JavaScript side channels | JS gives no constant-time guarantees; the Shamir library uses table lookups. Operations run once, on the user's device. |
@@ -240,7 +261,8 @@ and the guardian hold no SOL at all.
 ```bash
 npm run build                 # anchor build: SBF + IDL (Solana 1.18.17, Anchor CLI 0.30.2)
 npm run test:rust             # 14 Rust unit tests: Schnorr verifier, member commitments, config, cross-language vectors
-npm test                      # 79 tests on Node 24: LiteSVM lifecycle, SDK vectors and attacks, client, relayer
+npm test                      # 82 tests on Node 24: LiteSVM lifecycle, SDK vectors and attacks, client, relayer, watcher
+npm run watcher -- --once <capsule>   # the watcher against devnet: scan every capsule, check that one locally
 cd app && npm run e2e         # the whole story in Chrome on a local validator (registration reply dropped, SIK-22) + on-chain privacy check
 npm run e2e:devnet            # the same through the production bundle and the relayer service, on devnet
 ```

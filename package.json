@@ -7,7 +7,8 @@
     "build": "anchor build",
     "test": "ts-mocha -p ./tsconfig.json -t 1000000 'tests/**/*.ts'",
     "test:rust": "cargo test -p sikrit",
-    "typecheck": "tsc --noEmit -p ."
+    "typecheck": "tsc --noEmit -p .",
+    "watcher": "ts-node --transpile-only scripts/watcher.ts"
   },
   "dependencies": {
     "@anchor-lang/core": "0.30.2",

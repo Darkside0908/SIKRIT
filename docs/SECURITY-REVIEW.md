@@ -1,7 +1,7 @@
 # SIKRIT — Security & Code Review (`programs/sikrit`)
 
-> **Scope:** `programs/sikrit/src/lib.rs` versi awal (draft v0.1), konfigurasi build (`Anchor.toml`, `Cargo.toml`), desain kriptografi Schnorr proof-of-liveness, dan (sejak 30 Sep malam) protokol custody share di SDK client (`sdk/hpke.ts`, `sdk/shamir.ts`, `sdk/kit.ts`) — lihat §5; frontend (§6), relayer service `app/api/relay.ts` (§7), protokol v2 (§9), re-audit independen kode v2 (§10) dan `update_capsule` (§11, protokol v2.1).
-> **Tanggal:** 30 September – 4 Oktober 2026 · **Metode:** review manual (kriptografi + keamanan smart contract), kompilasi SBF nyata, 14 unit test Rust, 79 test TypeScript (lifecycle di LiteSVM dengan time-travel, SDK, client, relayer), E2E Chrome melawan validator lokal dan devnet, dan benchmark compute unit.
+> **Scope:** `programs/sikrit/src/lib.rs` versi awal (draft v0.1), konfigurasi build (`Anchor.toml`, `Cargo.toml`), desain kriptografi Schnorr proof-of-liveness, dan (sejak 30 Sep malam) protokol custody share di SDK client (`sdk/hpke.ts`, `sdk/shamir.ts`, `sdk/kit.ts`) — lihat §5; frontend (§6), relayer service `app/api/relay.ts` (§7), protokol v2 (§9), re-audit independen kode v2 (§10), `update_capsule` (§11, protokol v2.1) dan watcher (§12).
+> **Tanggal:** 30 September – 4 Oktober 2026 · **Metode:** review manual (kriptografi + keamanan smart contract), kompilasi SBF nyata, 14 unit test Rust, 82 test TypeScript (lifecycle di LiteSVM dengan time-travel, SDK, client, relayer), E2E Chrome melawan validator lokal dan devnet, dan benchmark compute unit.
 > **Hasil:** 22 temuan — 3 Critical, 4 High, 6 Medium, 8 Low, 1 Info (desain). Dua puluh satu sudah diperbaiki di kode; SIK-11 dimitigasi di client (urutan release tetap janji guardian, bukan paksaan kriptografis). SIK-16/17 berasal dari audit akhir frontend, SIK-18 dari E2E pertama melawan devnet (§6), SIK-19/20 dari review protokol setelah deploy (§9), SIK-21/22 dari re-audit kode v2 (§10).
 
 ---
@@ -197,8 +197,13 @@ Semua di bawah budget default 200.000 CU per instruksi → tidak perlu instruksi
 `claim` 8.289; fee 5.000 lamport per tanda tangan. Kapsul bukti v2.1 `GqAtC8…mgqq` (4 Okt 2026, termasuk update):
 `create_capsule` 76.598 (bump PDA 250, jadi lima percobaan alamat gagal, masing-masing ±1.500 CU), `heartbeat` 41.417,
 `update_capsule` 60.225, `trigger_claim` 6.827, `guardian_confirm` 7.276, `claim` 7.548. Tiga instruksi terakhir ~740 CU
-lebih murah daripada 2 Okt, sementara LiteSVM dengan binary baru memberi angka yang sama seperti sebelumnya: selisihnya
-dari runtime devnet, bukan dari kode.
+lebih murah daripada 2 Okt karena roster-nya lebih kecil setelah re-seal (2 guardian + 3 share hash, sebelumnya 3 + 4);
+heartbeat dikirim sebelum re-seal, jadi sama dengan 2 Okt.
+
+Anchor men-(de)serialisasi seluruh akun di setiap instruksi, jadi tiap komitmen guardian atau share hash menambah
+~370 CU. Diukur di LiteSVM untuk `trigger_claim` / `guardian_confirm` / `claim`: 6.827 / 7.274 / 7.546 dengan 2 guardian
++ 3 share hash, 7.568 / 8.015 / 8.287 dengan 3 + 4 (angka tabel di atas), 10.530 / 10.977 / 11.249 dengan roster
+maksimum 5 + 10.
 
 ---
 
@@ -213,7 +218,7 @@ dari runtime devnet, bukan dari kode.
 | R5 | Penundaan oleh guardian jahat | Terbatas `jumlah_guardian × (interval + grace)`. Jika ingin lebih ketat: veto butuh threshold guardian. |
 | R6 | Toolchain legacy | Anchor 0.30.x menghasilkan SBPF v0. Agave 4.3 sudah memuat feature gate SIMD-0500 (menonaktifkan deploy SBPF v0–v2) yang **belum aktif** di devnet/mainnet per 30 Sep 2026; deploy devnet 1 Okt 2026 berhasil. Gate itu memblokir deploy/upgrade baru, bukan eksekusi program yang sudah ada — tetapi setelah aktif, perbaikan bug butuh build SBPF v3. Setelah hackathon, migrasi ke Anchor 1.x (SBPF v3). |
 | R7 | Rent tidak bisa ditarik kembali | Tidak ada instruksi `close`; rent ~0,004–0,005 SOL per kapsul terkunci (0,0039 SOL di devnet untuk akun 637 byte, 3 Okt 2026). Tambahkan `close` pasca-`Claimed` jika diperlukan. |
-| R8 | Pemilik tidak sadar ada trigger | Pemilik perlu notifikasi off-chain (watcher event `ClaimTriggered`) agar sempat heartbeat selama grace period. |
+| R8 | Pemilik tidak sadar ada trigger | Dimitigasi sejak 4 Okt oleh watcher (§12): `npm run watcher` memindai semua kapsul dan memperingatkan pemilik (heartbeat jatuh tempo atau terlambat, klaim terbuka, klaim bisa diambil) tanpa memberi tahu RPC kapsul mana miliknya; push opsional ke ntfy/webhook tanpa alamat kapsul. Sisa: pemilik harus menjalankannya di mesin yang terus menyala, dan layanan push melihat *kapan* alert terkirim (di chain yang sepi bisa dicocokkan dengan `ClaimTriggered` publik; self-host server push bila itu penting). |
 | R9 | Phishing tanda tangan kunci liveness / inbox | `deriveLivenessSecret()` (SDK) menurunkan `x` dari tanda tangan wallet atas `KEYGEN_MESSAGE`. Situs phishing yang mendapat tanda tangan yang sama bisa memalsukan heartbeat (menahan pewarisan), walau tidak bisa membuka rahasia. Sejak v2.1 (§11) pemegang `x` juga bisa menyegel ulang kapsul dengan satu `update_capsule`, yang langsung mematikan kit keluarga (sebelumnya ia harus terus mengirim heartbeat); dampaknya tetap ketersediaan, bukan kebocoran, dan pemilik yang masih hidup bisa menyegel ulang lagi. Mitigasi: ikat origin/domain aplikasi ke pesan (gaya Sign-In With Solana) atau pakai `generateLivenessSecret()` acak yang disimpan terenkripsi. Hal yang sama berlaku untuk `INBOX_MESSAGE`: tanda tangan yang dicuri membuka share milik pemegang itu saja (< k). |
 | R10 | Bukan post-quantum | X25519 (HPKE) dan Ed25519 tidak tahan komputer kuantum. Kit sengaja tidak ditaruh di storage publik permanen (hanya hash yang on-chain) sehingga tidak bisa di-*harvest now, decrypt later* secara massal. Roadmap: KEM hibrida X-Wing (ML-KEM-768 + X25519) begitu HPKE-nya terstandar; format kit sudah berversi. |
 | R11 | Side channel JavaScript | JS (JIT + GC) tidak menjamin constant-time; aritmetika GF(2^8) library Shamir memakai tabel lookup. Operasi dilakukan sekali di device pengguna; penyerang lokal yang bisa mengukur cache di device itu di luar model ancaman. |
@@ -371,7 +376,8 @@ R18.
 ```bash
 npm run build                # anchor build: SBF + IDL (Solana 1.18.17, Anchor CLI 0.30.2)
 npm run test:rust            # 14 unit test: verifier Schnorr, komitmen anggota, validasi config, vektor lintas bahasa (liveness + update)
-npm test                     # 79 test: lifecycle di LiteSVM + SDK + client + relayer service (Node 24 LTS)
+npm test                     # 82 test: lifecycle di LiteSVM + SDK + client + relayer service + watcher (Node 24 LTS)
+npm run watcher -- --once <kapsul>   # watcher melawan devnet: scan semua kapsul, cek kapsul itu secara lokal
 npm run typecheck
 cd app && npm run e2e        # E2E Chrome: seluruh cerita warisan + cek privasi on-chain (SIK-16, SIK-19, SIK-22)
 cd app && npm run e2e:devnet # cerita yang sama lewat bundle produksi + relayer service melawan devnet (SIK-18, §7)
@@ -568,3 +574,35 @@ lewat update? Tidak: tepat satu akun (kapsul), satu tanda tangan, relayer tidak 
 terhadap chain, dan dashboard hanya menyebut pemegang dari kit yang cocok. **Tidak ada temuan baru.** Upgrade devnet
 4 Okt 2026 (slot 507248087, byte on-chain = build lokal, sha256 `f79790ae…`, IDL on-chain ikut diperbarui), lalu
 `npm run e2e:devnet` hijau melawannya: kapsul bukti `GqAtC8…mgqq`, 7 transaksi, wallet pemilik di 0, Rizal di 0.
+
+---
+
+## 12. Watcher tanpa kebocoran (4 Okt 2026)
+
+**Celah (R8):** pemilik yang lupa heartbeat tidak tahu ada klaim yang dibuka, padahal grace period ada justru supaya ia
+sempat membatalkannya. Watcher biasa memantau satu kapsul lewat RPC (`getAccountInfo` tiap beberapa menit), dan itu
+memberi tahu operator RPC "IP ini peduli pada kapsul C": tautan yang justru disembunyikan SIKRIT.
+
+**Desain** (`sdk/watch.ts`, CLI `scripts/watcher.ts`, catatan desain `docs/plans/2026-10-04-watcher-design.md`): tiap
+scan mengunduh **semua** kapsul dengan satu `getProgramAccounts` yang filternya (`dataSize` 637 + diskriminator akun)
+sama untuk setiap kapsul, lalu memilih kapsul milik pemilik di mesinnya sendiri. Status dan timer berada setelah vektor
+berpanjang variabel, jadi akun diunduh utuh (637 byte; ~6 MB per scan pada 10.000 kapsul). Berbasis state, bukan event:
+scan yang terlewat tertangkap scan berikutnya, dan tidak ada parsing log yang bisa dipalsukan program lain.
+`checkCapsule` menghasilkan alert berkunci (sekali per epoch liveness atau per klaim) yang teksnya tidak memuat alamat
+kapsul, P, atau wallet anggota, jadi aman dikirim ke layanan push. Watcher tidak mengirim transaksi.
+
+**Siapa belajar apa:** RPC: ada IP yang menjalankan watcher SIKRIT, bukan kapsul yang mana. Layanan push: *kapan* alert
+terkirim; di chain yang sepi waktu itu bisa dicocokkan dengan `ClaimTriggered` publik, jadi self-host ntfy bila itu
+penting. Pengamat chain: tidak ada yang baru.
+
+**Bukti:** test LiteSVM: scan satu request yang tidak menyebut kapsul mana pun dan melewati akun lain milik program
+(kapsul format lama, akun berukuran sama dengan diskriminator lain); alert sekali per epoch atau klaim sepanjang
+lifecycle nyata (jatuh tempo → terlambat → klaim → heartbeat membatalkan → terlambat lagi → klaim baru → grace lewat
+tanpa kuorum → bisa diambil → diklaim); teks tanpa alamat; parsing CLI. Skenario hidup di `solana-test-validator`:
+watcher sebagai proses terpisah dengan `--notify` ke server HTTP lokal menerima tepat tiga push (jatuh tempo/default,
+terlambat/high, klaim terbuka/high) tanpa alamat, lalu heartbeat pemilik membatalkan klaim. `--once` melawan RPC publik
+devnet: 6 kapsul ter-scan, kedua kapsul bukti terbaca `claimed`, alamat acak terbaca "not found".
+
+**Batas & arah berikutnya:** pemilik harus menjalankan watcher di mesin yang terus menyala (VPS, Raspberry Pi). Scan
+penuh tumbuh dengan jumlah kapsul; pada skala besar, feed publik perubahan state yang difilter di perangkat
+mempertahankan sifat yang sama dengan data lebih kecil.

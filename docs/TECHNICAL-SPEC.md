@@ -144,6 +144,10 @@ Urutan "release hanya setelah `Claimed`" adalah janji guardian yang dijalankan c
 
 `sdk/liveness.ts` (TypeScript, `@noble/curves`) — tidak perlu WASM. Nonce di-hedge (deterministik atas `x` + transkrip + 32 byte acak). Format transkrip dikunci known-answer vector lintas bahasa (TS prover ↔ Rust verifier).
 
+### 3.6 Watcher (`sdk/watch.ts`, `npm run watcher`)
+
+Memperingatkan pemilik (heartbeat jatuh tempo/terlambat, klaim terbuka, klaim bisa diambil, sudah diklaim) tanpa memberi tahu RPC kapsul mana yang dipantau: tiap scan satu `getProgramAccounts` untuk semua kapsul (filter `dataSize` + diskriminator, sama untuk setiap kapsul), lalu kapsul sendiri dipilih dan dicek secara lokal. Alert berkunci per epoch liveness / per klaim (dikirim sekali), teksnya tanpa alamat kapsul sehingga aman untuk layanan push (ntfy/webhook). Analisis: SECURITY-REVIEW §12.
+
 ---
 
 ## 4. Data Flow Lengkap (Lifecycle)
@@ -152,7 +156,7 @@ Urutan "release hanya setelah `Claimed`" adalah janji guardian yang dijalankan c
 2. **Setup:** pemilik menurunkan kunci liveness dari wallet → `sealCapsuleKit` (rahasia → DEK → Shamir → HPKE ke tiap pemegang, salt per pemegang) → `create_capsule` (commitment + komitmen anggota + `share_hashes` + proof-of-possession), dibayar fee payer terpisah → kit dibagikan off-chain; dari kit itulah ahli waris dan guardian mengenal kapsulnya.
 3. **Alive:** pemilik `heartbeat` tiap interval (Schnorr PoK berumur 10 menit, di-relay fee payer mana pun) → timer reset; tidak ada wallet/identitas pemilik maupun keluarganya di transaksi.
    - **Berubah pikiran:** kapan pun sebelum `Claimed`, pemilik menyegel ulang (invite yang sama atau baru, rahasia dimasukkan lagi) → kit baru → `update_capsule` dengan bukti atas config baru. Komitmen dan hash share lama hilang dari chain, sehingga kit lama tidak lagi lolos `verifyKit` dan guardian menolak me-release darinya. Batas jujur: share yang sudah dibagikan tidak bisa ditarik; k pemegang lama yang berkolusi tetap bisa membuka payload lama secara offline (R19), jadi pindahkan dananya bila mengeluarkan orang yang tidak lagi dipercaya.
-4. **Timeout:** pemilik berhenti heartbeat → siapa pun `trigger_claim` → grace period berjalan (pemilik masih bisa membatalkan dengan heartbeat).
+4. **Timeout:** pemilik berhenti heartbeat → siapa pun `trigger_claim` → grace period berjalan (pemilik masih bisa membatalkan dengan heartbeat; watcher membunyikan alarm).
 5. **Guardian:** kuorum `guardian_confirm(slot, salt)` (atau `guardian_veto` kalau false-trigger); di sinilah guardian itu pertama kali terlihat on-chain.
 6. **Claim:** ahli waris `claim(salt)` → status `Claimed`, wallet ahli waris tercatat.
 7. **Release & recovery:** guardian melihat `Claimed` → re-seal share ke inbox ahli waris → ahli waris verifikasi hash → gabungkan → dekripsi rahasia.

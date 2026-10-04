@@ -13,6 +13,8 @@ sdk/kit.ts                   Capsule kit: enkripsi rahasia, split kunci, seal sh
 tests/sikrit.ts              Test lifecycle kapsul di LiteSVM (time-travel clock)
 tests/sdk.ts                 Test SDK: known-answer vector RFC 9180 & FIPS-197, serangan pada kit
 sdk/client.ts                Client program ringan (instruksi, decoder akun, discovery) — diverifikasi byte-per-byte vs Anchor
+sdk/watch.ts                 Watcher: scan semua kapsul (satu getProgramAccounts), alert untuk kapsul sendiri secara lokal
+scripts/watcher.ts           `npm run watcher`: watcher sebagai perintah, push opsional (ntfy/webhook)
 app/                         Frontend demo (Vite + React + Tailwind + wallet adapter), memakai sdk/* langsung
 app/e2e/demo-flow.mjs        E2E Chrome: owner → heartbeat → klaim → guardian 2-of-3 → heir memulihkan seed
 docs/                        Pitch, spesifikasi teknis, security review
@@ -139,13 +141,31 @@ batas per IP) dan risikonya ada di security review §7. Env server:
 Catatan: `vite.config.ts` mengimpor `api/relay.ts`, jadi mengedit file itu me-restart dev server (dan me-reload
 halaman). Jangan mengeditnya saat E2E berjalan.
 
+## Watcher (`npm run watcher`)
+
+Mengingatkan pemilik sebelum heartbeat jatuh tempo dan membunyikan alarm saat klaim dibuka (R8), tanpa memberi tahu RPC
+kapsul mana yang dipantau: tiap scan mengunduh semua kapsul lalu memilih milik sendiri secara lokal (SECURITY-REVIEW §12).
+
+```bash
+npm run watcher -- <alamat kapsul>… --notify https://ntfy.sh/<topik-rahasia>   # loop, scan tiap 5 menit
+npm run watcher -- --once <alamat kapsul> --rpc http://127.0.0.1:8899           # sekali (cron), validator lokal
+```
+
+Opsi lain: `--every` (detik antar scan, default 300) dan `--remind` (berapa detik sebelum jatuh tempo, default 86400).
+Teks push hanya menyebut "Capsule #1" (urutan di daftarmu), tidak pernah alamatnya; layanan push tetap melihat kapan
+alert terkirim. Jalankan di mesin yang terus menyala (VPS, Raspberry Pi).
+
 ## Biaya compute (LiteSVM, binary SBF asli)
 
 | Instruksi | Compute units |
 |---|---|
 | `create_capsule` | ~68–72k (bergantung pencarian bump PDA) |
 | `heartbeat` | ~41,4k (verifikasi Schnorr + cek masa berlaku) |
-| `trigger_claim` / `guardian_veto` | ~7,6k |
+| `update_capsule` | ~60k (validasi config + bukti atas config baru) |
+| `trigger_claim` / `guardian_veto` | ~7,6k (3 guardian + 4 share hash) |
 | `guardian_confirm` / `claim` | ~8–8,3k (membuka komitmen anggota: SHA-256 syscall) |
+
+Anchor men-(de)serialisasi seluruh akun di setiap instruksi, jadi tiap komitmen guardian atau share hash menambah ~370 CU:
+`trigger_claim` 6.827 CU dengan 2 guardian + 3 share hash, 10.530 CU dengan roster maksimum 5 + 10.
 
 Semua di bawah budget default 200k CU. Verifikasi yang sama dengan curve25519-dalek murni di SBF gagal (melebihi batas 1,4 jt CU / stack access violation) — detail di SIK-03.
