@@ -22,14 +22,17 @@ const SAMPLE_SEED = "abandon ability able about above absent absorb abstract abs
 
 export function OwnerPage() {
   const { actor, persona } = useActor("owner");
-  const [secret, setSecret] = useState<bigint>();
+  const [derived, setDerived] = useState<{ by: string; secret: bigint }>();
   const [sent, setSent] = useState<SentTransaction>();
   const action = useAction();
   const actorKey = actor?.publicKey.toBase58();
+  // The liveness key belongs to the identity that derived it. Another identity, or none (a wallet that disconnected or
+  // locked), never renders with it, not even for the one frame before the effect below runs.
+  const secret = actorKey !== undefined && derived?.by === actorKey ? derived.secret : undefined;
 
   // A different identity means a different liveness key: forget everything derived so far.
   useEffect(() => {
-    setSecret(undefined);
+    setDerived((current) => (current?.by === actorKey ? current : undefined));
     setSent(undefined);
   }, [actorKey]);
 
@@ -40,7 +43,8 @@ export function OwnerPage() {
   const unlock = () =>
     action.run("Deriving", async () => {
       if (!actor) throw new Error("Choose who you are acting as first");
-      setSecret(await liveness.deriveLivenessSecretFromWallet(actor.publicKey.toBytes(), actor.signMessage));
+      const secret = await liveness.deriveLivenessSecretFromWallet(actor.publicKey.toBytes(), actor.signMessage);
+      setDerived({ by: actor.publicKey.toBase58(), secret });
     });
 
   return (
