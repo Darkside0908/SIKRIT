@@ -64,6 +64,7 @@ function relayerService(rpcUrl: string, localnet: boolean): Plugin {
       const connection = new Connection(rpcUrl, "confirmed");
       chain = {
         sendRawTransaction: rpc.sendRawTransaction,
+        simulate: rpc.simulate,
         async getBalance(address) {
           if ((await rpc.getBalance(address)) < LAMPORTS_PER_SOL) {
             const signature = await connection.requestAirdrop(new PublicKey(address), 10 * LAMPORTS_PER_SOL);

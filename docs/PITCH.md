@@ -96,8 +96,8 @@ kripto", atau bahwa waktu heartbeat tersembunyi (tidak).
 | Keluarga tidak on-chain sebelum bertindak | E2E yang sama: Sari (ahli waris) hanya muncul di transaksi klaimnya, Budi & Dewi hanya di konfirmasi masing-masing, Rizal (guardian yang dikeluarkan lewat update) di **0**; akun kapsul hanya memuat komitmen sampai klaim |
 | Murah | Verifikasi heartbeat **41.417 CU** (diukur di devnet 4 Okt, termasuk cek masa berlaku); fee 5.000 lamport. Heartbeat mingguan 30 tahun ≈ **0,0078 SOL** |
 | Kriptografi benar | Transkrip Fiat–Shamir dikunci *known-answer vector* lintas bahasa (TS ↔ Rust); HPKE lolos vektor resmi RFC 9180; Shamir pakai library teraudit (Cure53 + Zellic) |
-| Aman | Self-audit 22 temuan (`docs/SECURITY-REVIEW.md`, program + SDK + app + relayer): replay, double-vote guardian, veto DoS, swap kunci inbox, roster keluarga yang menunjuk ke pemilik, bukti heartbeat tanpa masa berlaku, dst. — semua High/Critical sudah diperbaiki dan dites |
-| Bekerja end-to-end | 82 test (LiteSVM + SDK + client + relayer + watcher) + 14 unit test Rust + E2E browser 13 langkah, di validator lokal **dan di devnet**: seed phrase pulih identik di browser ahli waris |
+| Aman | Self-audit 23 temuan (`docs/SECURITY-REVIEW.md`, program + SDK + app + relayer): replay, double-vote guardian, veto DoS, swap kunci inbox, roster keluarga yang menunjuk ke pemilik, bukti heartbeat tanpa masa berlaku, dst. — semua High/Critical sudah diperbaiki dan dites |
+| Bekerja end-to-end | 84 test (LiteSVM + SDK + client + relayer + watcher) + 14 unit test Rust + E2E browser 13 langkah, di validator lokal **dan di devnet**: seed phrase pulih identik di browser ahli waris |
 
 ## 6. Bisnis & go-to-market *(rencana; belum ada pendapatan)*
 
@@ -124,7 +124,7 @@ lewat komunitas kripto, kampus, dan notaris/perencana keuangan. Setelah itu peng
 
 | Kriteria (Rules §8) | Jawaban SIKRIT |
 |---|---|
-| **Functionality** | Program Anchor live di devnet + SDK + app berjalan end-to-end; 82 test + 14 unit test Rust + E2E browser (localnet & devnet); kode diaudit sendiri dengan temuan terdokumentasi |
+| **Functionality** | Program Anchor live di devnet + SDK + app berjalan end-to-end; 84 test + 14 unit test Rust + E2E browser (localnet & devnet); kode diaudit sendiri dengan temuan terdokumentasi |
 | **Potential Impact** | Jutaan BTC terkunci permanen; setiap pengguna self-custody butuh rencana waris; primitive privasi yang bisa dipakai ulang (*proof of liveness* tanpa identitas) |
 | **Novelty** | Heartbeat tanpa identitas: tidak ada di 11 proyek yang kami periksa. Bukti Schnorr diverifikasi dengan syscall curve25519 dalam 41k CU. Roster tersegel melengkapinya (Ethernal juga menyegel ahli waris, tapi pemiliknya tetap terlihat): pemilik **dan** keluarganya tidak terlihat sampai bertindak |
 | **UX** | Tanpa token, tanpa KYC, tanpa hardware khusus. Pemilik tidak perlu SOL dan tidak perlu backup kunci baru (diturunkan ulang dari wallet). Setup ±2 menit |

@@ -61,7 +61,8 @@ SIKRIT/
 │   ├── api/relay.ts          <-- Relayer service (Vercel function; di-mount vite dev/preview): fee hanya untuk 1 instruksi SIKRIT
 │   ├── scripts/localnet.mjs  <-- `npm run localnet`: validator + program + dev server
 │   ├── scripts/devnet-e2e.mjs <-- `npm run e2e:devnet`: bundle produksi + relayer service melawan program di devnet
-│   └── e2e/demo-flow.mjs     <-- `npm run e2e`: seluruh cerita demo di Chrome + cek privasi on-chain
+│   ├── e2e/demo-flow.mjs     <-- `npm run e2e`: seluruh cerita demo di Chrome + cek privasi on-chain
+│   └── e2e/wallet-flow.mjs   <-- `npm run e2e:wallet`: warisan dengan wallet asli (aturan priority fee Phantom, SIK-23)
 └── tests/
     ├── sikrit.ts             <-- Test lifecycle kapsul di LiteSVM (time-travel)
     └── sdk.ts                <-- Test SDK (vector RFC 9180, FIPS-197, serangan pada kit)
@@ -77,7 +78,7 @@ SIKRIT/
 - Format transkrip Fiat–Shamir (`SIKRIT:liveness:v2`, context `nonce ‖ expires_at`; `SIKRIT:update:v1`, context `nonce ‖ expires_at ‖ Borsh(config)`) dan komitmen anggota (`SIKRIT:member:v1`) dikunci oleh known-answer vector di `tests/sikrit.ts` dan unit test Rust — ubah keduanya bersamaan.
 - Format kit (domain `SIKRIT:*:v1`, derivasi inbox key, hash share) dikunci vector di `tests/sdk.ts`; ubah = naikkan versi kit.
 - Kustodi share: share 0 → heir, share 1+g → guardian g, k − 1 = kuorum guardian. Guardian hanya release setelah `Claimed` ke inbox yang disertifikasi ahli waris yang dikomit (wallet + salt di kit membuka `heir_commitment`, dan sama dengan `heir` yang tercatat saat claim; lihat SIK-11/12/19). Tidak ada discovery kapsul by wallet: heir/guardian mengenal kapsulnya dari kit.
-- Relayer: `app/api/relay.ts` (ESM, dimuat Node 24 secara native di test; ts-node mengabaikan `app/api/`). `vite.config.ts` mengimpornya, jadi mengedit file itu me-restart dev server + reload halaman — jangan saat E2E berjalan.
+- Relayer: `app/api/relay.ts` (ESM; confirm/veto/claim ditandatangani relayer DULU lewat `{ sign: true }` sebelum wallet, karena Phantom menambah priority fee ke tx tanpa tanda tangan — SIK-23; dimuat Node 24 secara native di test; ts-node mengabaikan `app/api/`). `vite.config.ts` mengimpornya, jadi mengedit file itu me-restart dev server + reload halaman — jangan saat E2E berjalan.
 - App: `cd app && npm run localnet` lalu `npm run e2e` (butuh Chrome di `CHROME_PATH`, default `/usr/bin/google-chrome`; ~2,5 menit karena timer minimum program 60 s). Komponen per-kapsul di halaman Guardian/Heir WAJIB di-key per actor (beberapa guardian berbagi kapsul — state bocor antar persona pernah jadi bug).
 
 ---
@@ -85,7 +86,7 @@ SIKRIT/
 ## ⚡ Next Priorities for Claude Code
 1. ~~Buat dan lengkapi `programs/sikrit/src/lib.rs` sesuai spesifikasi~~ ✅ (lihat `docs/SECURITY-REVIEW.md`)
 2. ~~Pastikan logika verifikasi ZK Schnorr proof bekerja di Rust~~ ✅ (syscall curve25519, ~41k CU)
-3. ~~Siapkan unit tests~~ ✅ (82 test TS: LiteSVM + SDK + client + relayer + watcher; 14 unit test Rust; E2E browser localnet + devnet)
+3. ~~Siapkan unit tests~~ ✅ (84 test TS: LiteSVM + SDK + client + relayer + watcher; 14 unit test Rust; E2E browser localnet + devnet)
 4. ~~Inisialisasi frontend dashboard untuk demo flow~~ ✅ (`app/`, E2E Chrome hijau; heartbeat dikirim relayer, bukan wallet pemilik)
 5. ~~M2: enkripsi share + custody share lewat guardian (SIK-11)~~ ✅ (`sdk/kit.ts`)
 6. ~~Deploy devnet~~ ✅ 1 Okt 2026 (`FJKqf…Tc45F`, byte on-chain = build lokal; `cd app && npm run e2e:devnet` hijau). Upgrade: lihat `docs/DEVELOPMENT.md` §Devnet (RPC publik 429 → `app/scripts/write-buffer.mjs`).

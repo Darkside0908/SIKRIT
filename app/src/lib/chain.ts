@@ -30,6 +30,12 @@ export interface Cosigner {
 /** Whoever pays the fees (see relayer.ts): adds the fee payer's signature and broadcasts. */
 export interface FeePayer {
   publicKey: PublicKey;
+  /**
+   * Adds the fee payer's signature without broadcasting, before a wallet co-signs. A wallet such as Phantom adds
+   * priority-fee instructions to a transaction nobody has signed yet, which the relayer refuses to pay for; one that is
+   * already signed it leaves untouched (SIK-23).
+   */
+  signFirst(transaction: Transaction): Promise<Transaction>;
   submit(transaction: Transaction): Promise<string>;
 }
 
@@ -51,7 +57,7 @@ export async function sendWithRelayer(
 ): Promise<SentTransaction> {
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
   let transaction = new Transaction({ feePayer: relayer.publicKey, blockhash, lastValidBlockHeight }).add(...instructions);
-  if (cosigner) transaction = await cosigner.signTransaction(transaction);
+  if (cosigner) transaction = await cosigner.signTransaction(await relayer.signFirst(transaction));
   const signature = await relayer.submit(transaction);
   const { value } = await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, "confirmed");
   if (value.err) throw new Error(`Transaction failed: ${JSON.stringify(value.err)}`);

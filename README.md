@@ -107,7 +107,7 @@ stateDiagram-v2
 | Cost of a heartbeat | 5,000 lamports. 30 years of weekly heartbeats ≈ **0.0078 SOL**. No token |
 | Owner wallets in capsule transactions | **0 of 7**, checked on-chain by the E2E test |
 | Family wallets on-chain before they act | **0**: heir only in her claim, guardians only in their own confirmation |
-| Tests | 82 TypeScript (LiteSVM lifecycle + SDK + client + relayer + watcher) · 14 Rust unit · 13-step browser E2E on localnet and devnet |
+| Tests | 84 TypeScript (LiteSVM lifecycle + SDK + client + relayer + watcher) · 14 Rust unit · 13-step browser E2E on localnet and devnet |
 
 ## Try it locally (~5 minutes)
 
@@ -118,6 +118,7 @@ npm install && npm run build      # Anchor program → target/deploy/sikrit.so
 cd app && npm install
 npm run localnet                  # solana-test-validator + SIKRIT program + app on http://localhost:5173
 npm run e2e                       # optional: the whole inheritance story in headless Chrome (~2.5 min)
+npm run e2e:wallet                # optional: the same with real wallets (Wallet Standard, Phantom's priority-fee rule)
 ```
 
 The demo casts five in-browser wallets (Pak Arif the owner, his daughter Sari, guardians Budi, Dewi and Rizal), and a
@@ -129,7 +130,7 @@ it deploys as a serverless function (set `RELAYER_SECRET_KEY` to a funded devnet
 instructions, as fee payer and as a new capsule's rent payer, so its key can't be used to move its SOL anywhere else.
 
 ```bash
-npm test                # 82 tests: lifecycle on the real SBF binary with a time-travelling clock, SDK vectors, client, relayer, watcher
+npm test                # 84 tests: lifecycle on the real SBF binary with a time-travelling clock, SDK vectors, client, relayer, watcher
 npm run test:rust       # verifier unit tests, incl. a known-answer vector shared with the TypeScript prover
 npm run typecheck
 ```
@@ -156,6 +157,7 @@ sdk/README.md                integration guide for wallets, relayers and watcher
 app/                         demo app: Vite + React + Tailwind + wallet adapter
 app/api/relay.ts             relayer service (Vercel function / dev server): pays fees for SIKRIT instructions only
 app/e2e/demo-flow.mjs        end-to-end test in Chrome + on-chain privacy check
+app/e2e/wallet-flow.mjs      the inheritance with a real (Wallet Standard) wallet that adds priority fees like Phantom
 scripts/watcher.ts           `npm run watcher`: the watcher as a command, with optional push alerts
 tests/                       LiteSVM lifecycle tests, SDK tests (RFC 9180 and FIPS-197 vectors, attacks on the kit)
 docs/                        pitch, research, technical spec, security review, deck, video scripts, submission kit

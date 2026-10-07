@@ -12,6 +12,7 @@ import { ed25519 } from "@noble/curves/ed25519";
 import { sha256 } from "@noble/hashes/sha256";
 import { bytesToHex, hexToBytes, randomBytes, utf8ToBytes } from "@noble/hashes/utils";
 import {
+  ComputeBudgetProgram,
   Connection,
   GetProgramAccountsConfig,
   Keypair,
@@ -764,6 +765,17 @@ describe("SIKRIT — privacy-preserving dead man's switch", () => {
           async getBalance(address) {
             return Number(h.svm.getBalance(new PublicKey(address)) ?? 0n);
           },
+          async simulate(raw) {
+            // Like RPC simulateTransaction with sigVerify: false: the co-signature is still missing.
+            h.svm.withSigverify(false);
+            try {
+              const result = h.svm.simulateTransaction(Transaction.from(Buffer.from(raw)));
+              if (result instanceof FailedTransactionMetadata) return { err: result.err().toString(), logs: result.meta().logs() };
+              return { err: null, logs: result.meta().logs() };
+            } finally {
+              h.svm.withSigverify(true);
+            }
+          },
         },
       });
     /** What the app posts: the relayer as fee payer, co-signed by `signers`, the relayer's signature still missing. */
@@ -871,6 +883,113 @@ describe("SIKRIT — privacy-preserving dead man's switch", () => {
       expect(h.svm.getBalance(relayer.publicKey), "nothing was sent").to.equal(before);
     });
 
+    /**
+     * Phantom's documented signing rule (also modelled by app/e2e/wallet-flow.mjs): a transaction that carries no
+     * signature yet and no compute-budget instruction gets priority-fee instructions prepended before it is signed.
+     */
+    const phantomSigns = (base64: string, wallet: Keypair) => {
+      const tx = Transaction.from(Buffer.from(base64, "base64"));
+      const presigned = tx.signatures.some(({ signature }) => signature !== null);
+      if (!presigned && !tx.instructions.some((ix) => ix.programId.equals(ComputeBudgetProgram.programId))) {
+        tx.instructions = [
+          ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+          ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 100_000 }),
+          ...tx.instructions,
+        ];
+      }
+      tx.partialSign(wallet);
+      return tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString("base64");
+    };
+    const budget = (microLamports: number, units = 1_400_000) => [
+      ComputeBudgetProgram.setComputeUnitLimit({ units }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports }),
+    ];
+
+    it("lets heirs and guardians co-sign in a real wallet: it signs first, so the wallet adds nothing (SIK-23)", async () => {
+      const relayer = h.wallet(2);
+      const service = serviceFor(relayer);
+      const [heir, guardian] = [h.wallet(0), h.wallet(0)];
+      const capsule = newCapsuleIx(relayer.publicKey, [guardian.publicKey], heir.publicKey);
+      await service.relay(posted([capsule.ix], relayer.publicKey));
+      h.warp(60);
+      expect((await service.relay(posted([client.triggerClaimIx({ capsule: capsule.address })], relayer.publicKey))).status).to.equal(200);
+
+      // Unsigned, the wallet adds its priority fee, and the relayer refuses to pay for it.
+      const augmented = await service.relay(phantomSigns(posted([capsule.confirm(0)], relayer.publicKey), guardian));
+      expect([augmented.status, augmented.body.error]).to.deep.equal([400, "relayer: exactly one instruction per transaction"]);
+
+      const coSigned = async (ix: TransactionInstruction, wallet: Keypair) => {
+        const prepared = await service.sign(posted([ix], relayer.publicKey));
+        expect(prepared.status, JSON.stringify(prepared.body)).to.equal(200);
+        const signed = phantomSigns(prepared.body.transaction!, wallet);
+        expect(Transaction.from(Buffer.from(signed, "base64")).instructions, "the wallet added nothing").to.have.length(1);
+        const reply = await service.relay(signed);
+        expect(reply.status, JSON.stringify(reply.body)).to.equal(200);
+      };
+      await coSigned(capsule.confirm(0), guardian);
+      h.warp(61);
+      await coSigned(client.claimIx({ capsule: capsule.address, heir: heir.publicKey, salt: capsule.heirSalt }), heir);
+      expect(client.decodeCapsule(Uint8Array.from(h.svm.getAccount(capsule.address)!.data)).status).to.equal("claimed");
+      expect(Number(h.svm.getBalance(heir.publicKey) ?? 0n) + Number(h.svm.getBalance(guardian.publicKey) ?? 0n)).to.equal(0);
+    });
+
+    it("signs first only a co-signed SIKRIT instruction the program accepts now, and never what a wallet changes (SIK-23)", async () => {
+      const relayer = h.wallet(2);
+      const service = serviceFor(relayer);
+      const [heir, guardian, attacker] = [h.wallet(0), h.wallet(0), h.wallet(0)];
+      const capsule = newCapsuleIx(relayer.publicKey, [guardian.publicKey], heir.publicKey);
+      expect((await service.relay(posted([capsule.ix], relayer.publicKey))).status).to.equal(200);
+      const confirm = () => capsule.confirm(0);
+      const claim = () => client.claimIx({ capsule: capsule.address, heir: heir.publicKey, salt: capsule.heirSalt });
+
+      const refusals: [string, unknown, number, RegExp][] = [
+        ["a confirmation with a 1 000 000 000 µlamport/CU priority fee (1.4 SOL)", posted([...budget(1_000_000_000), confirm()], relayer.publicKey), 400, /exactly one instruction/],
+        ["a confirmation with even a 1 µlamport/CU priority fee", posted([...budget(1), confirm()], relayer.publicKey), 400, /exactly one instruction/],
+        ["a duplicated compute-unit limit", posted([...budget(0).slice(0, 1), ...budget(0).slice(0, 1), confirm()], relayer.publicKey), 400, /exactly one instruction/],
+        ["a compute-budget instruction alone", posted(budget(1_000_000).slice(1), relayer.publicKey), 400, /only SIKRIT instructions/],
+        ["a transfer smuggled after the confirmation",
+          posted([confirm(), SystemProgram.transfer({ fromPubkey: relayer.publicKey, toPubkey: attacker.publicKey, lamports: LAMPORTS_PER_SOL })], relayer.publicKey),
+          400, /exactly one instruction/],
+        ["someone else as fee payer", posted([confirm()], attacker.publicKey), 400, /must be the fee payer/],
+        // Owner actions need no wallet, so there is nothing to sign first: they go through `relay`, which broadcasts itself.
+        ["a heartbeat (no co-signer)", posted([beatIx(capsule)], relayer.publicKey), 400, /only co-signed instructions/],
+        ["a new capsule (no co-signer)", posted([newCapsuleIx(relayer.publicKey, [guardian.publicKey], heir.publicKey).ix], relayer.publicKey), 400, /only co-signed instructions/],
+        // Whoever holds a signed transaction can broadcast it without preflight, so one that would fail is never signed.
+        ["a confirmation before any claim is open", posted([confirm()], relayer.publicKey), 422, /Transaction simulation failed/],
+        ["a claim before any claim is open", posted([claim()], relayer.publicKey), 422, /Transaction simulation failed/],
+        ["not a transaction", "bm90IGEgdHJhbnNhY3Rpb24=", 400, /expected \{ transaction/],
+      ];
+      for (const [what, body, status, error] of refusals) {
+        const reply = await service.sign(body);
+        expect(reply.status, what).to.equal(status);
+        expect(reply.body.error, what).to.match(error);
+        expect(reply.body.transaction, what).to.equal(undefined);
+      }
+
+      h.warp(60);
+      expect((await service.relay(posted([client.triggerClaimIx({ capsule: capsule.address })], relayer.publicKey))).status).to.equal(200);
+      const before = h.svm.getBalance(relayer.publicKey);
+      const prepared = await service.sign(posted([confirm()], relayer.publicKey));
+      expect(prepared.status, JSON.stringify(prepared.body)).to.equal(200);
+      const presigned = Transaction.from(Buffer.from(prepared.body.transaction!, "base64"));
+      expect(presigned.signatures.map(({ publicKey, signature }) => [publicKey.toBase58(), signature !== null]))
+        .to.deep.equal([[relayer.publicKey.toBase58(), true], [guardian.publicKey.toBase58(), false]]);
+      // Its signature covers the message: a wallet that adds a priority fee anyway voids it.
+      const tampered = Transaction.from(Buffer.from(prepared.body.transaction!, "base64"));
+      tampered.instructions = [...budget(1_000_000_000), ...tampered.instructions];
+      tampered.partialSign(guardian);
+      expect(tampered.verifySignatures(false), "the relayer's signature does not cover added instructions").to.equal(false);
+      const reply = await service.relay(tampered.serialize({ requireAllSignatures: false, verifySignatures: false }).toString("base64"));
+      expect(reply.status).to.equal(400);
+      expect(h.svm.getBalance(relayer.publicKey), "nothing was sent").to.equal(before);
+
+      // Signing first counts against the same per-client limit as relaying.
+      const limited = serviceFor(relayer, { perMinute: 2, capsulesPerHour: 1 });
+      const statuses: number[] = [];
+      for (let i = 0; i < 3; i++) statuses.push((await limited.sign(posted([confirm()], relayer.publicKey), "x")).status);
+      expect(statuses).to.deep.equal([200, 200, 429]);
+    });
+
     it("hands program errors back with their logs, so the app can name them", async () => {
       const relayer = h.wallet(2);
       const service = serviceFor(relayer);
@@ -928,6 +1047,10 @@ describe("SIKRIT — privacy-preserving dead man's switch", () => {
       const tx = () => posted([client.triggerClaimIx({ capsule: Keypair.generate().publicKey })], relayer.publicKey);
       expect((await call("POST", { transaction: tx() })).status, "streamed body (vite dev/preview)").to.equal(422);
       expect((await call("POST", { transaction: tx() }, true)).status, "parsed body (Vercel)").to.equal(422);
+      const signFirst = await call("POST", { transaction: tx(), sign: true });
+      expect([signFirst.status, signFirst.body.error], "{ sign: true } asks for the signature only").to.deep.equal([
+        400, "relayer: it signs first only co-signed instructions (confirm, veto, claim)",
+      ]);
       expect((await call("POST", "{oops")).status).to.equal(400);
       expect((await call("PUT")).status).to.equal(405);
 

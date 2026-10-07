@@ -1,8 +1,8 @@
 # SIKRIT — Security & Code Review (`programs/sikrit`)
 
 > **Scope:** `programs/sikrit/src/lib.rs` versi awal (draft v0.1), konfigurasi build (`Anchor.toml`, `Cargo.toml`), desain kriptografi Schnorr proof-of-liveness, dan (sejak 30 Sep malam) protokol custody share di SDK client (`sdk/hpke.ts`, `sdk/shamir.ts`, `sdk/kit.ts`) — lihat §5; frontend (§6), relayer service `app/api/relay.ts` (§7), protokol v2 (§9), re-audit independen kode v2 (§10), `update_capsule` (§11, protokol v2.1) dan watcher (§12).
-> **Tanggal:** 30 September – 4 Oktober 2026 · **Metode:** review manual (kriptografi + keamanan smart contract), kompilasi SBF nyata, 14 unit test Rust, 82 test TypeScript (lifecycle di LiteSVM dengan time-travel, SDK, client, relayer), E2E Chrome melawan validator lokal dan devnet, dan benchmark compute unit.
-> **Hasil:** 22 temuan — 3 Critical, 4 High, 6 Medium, 8 Low, 1 Info (desain). Dua puluh satu sudah diperbaiki di kode; SIK-11 dimitigasi di client (urutan release tetap janji guardian, bukan paksaan kriptografis). SIK-16/17 berasal dari audit akhir frontend, SIK-18 dari E2E pertama melawan devnet (§6), SIK-19/20 dari review protokol setelah deploy (§9), SIK-21/22 dari re-audit kode v2 (§10).
+> **Tanggal:** 30 September – 7 Oktober 2026 · **Metode:** review manual (kriptografi + keamanan smart contract), kompilasi SBF nyata, 14 unit test Rust, 84 test TypeScript (lifecycle di LiteSVM dengan time-travel, SDK, client, relayer), E2E Chrome melawan validator lokal dan devnet, dan benchmark compute unit.
+> **Hasil:** 23 temuan — 3 Critical, 4 High, 7 Medium, 8 Low, 1 Info (desain). Dua puluh dua sudah diperbaiki di kode; SIK-11 dimitigasi di client (urutan release tetap janji guardian, bukan paksaan kriptografis). SIK-16/17 berasal dari audit akhir frontend, SIK-18 dari E2E pertama melawan devnet (§6), SIK-19/20 dari review protokol setelah deploy (§9), SIK-21/22 dari re-audit kode v2 (§10), SIK-23 dari E2E dengan wallet asli (§13).
 
 ---
 
@@ -32,6 +32,7 @@
 | SIK-20 | 🔵 Low | Bukti heartbeat tanpa masa berlaku: relayer yang menahan bukti bisa "menghidupkan" pemilik yang sudah diam sekali lagi | ✅ Fixed (§9, protokol v2) |
 | SIK-21 | 🔵 Low | Relayer service membayar tanda tangan tambahan: heartbeat yang ditempeli signer sekali pakai membuatnya membayar fee hingga 9× | ✅ Fixed (§10) |
 | SIK-22 | 🟡 Medium | Konfirmasi registrasi yang hilang membuang kit: kapsul terdaftar tanpa kit, dan wallet pemilik tidak bisa mendaftar lagi | ✅ Fixed (§10) |
+| SIK-23 | 🟡 Medium | Ahli waris/guardian dengan wallet asli (Phantom) tidak bisa confirm/veto/claim lewat relayer: wallet menambah instruksi priority fee yang ditolak relayer | ✅ Fixed (§13) |
 
 Nomor baris di bawah merujuk ke **draft awal** `lib.rs`.
 
@@ -356,6 +357,7 @@ dengan service ini sebagai satu-satunya fee payer.
 | Kunci relayer hanya boleh muncul di akun instruksi sebagai `payer` (slot 1) `create_capsule` | Tanda tangan relayer mengotorisasi hal lain: `SystemProgram.transfer` dari relayer (pengurasan), relayer sebagai guardian | *refuses every transaction…* (transfer System, relayer-sebagai-guardian) |
 | Semua tanda tangan lain diverifikasi sebelum kirim; preflight aktif | Membakar fee lewat transaksi yang pasti gagal | *refuses…* (co-signature hilang), *hands program errors back…* (422 + log, app tetap bisa menamai error) |
 | Jumlah akun persis milik instruksinya dan paling banyak 1–2 tanda tangan (sejak SIK-21, §10) | Relayer membayar tanda tangan signer sekali pakai yang ditempelkan ke instruksi (fee 5.000 lamport per tanda tangan) | *refuses every transaction…* (heartbeat + 8 signer, konfirmasi + 1 signer, heartbeat yang meminta tanda tangan kedua) |
+| Tanda tangan lebih dulu (`{ sign: true }`, sejak SIK-23, §13) hanya untuk confirm/veto/claim, dengan semua aturan di atas, dan hanya bila simulasi program saat itu sukses; pesan yang ditandatangani tidak bisa diubah | Wallet menambah priority fee yang dibayar relayer; transaksi gagal yang ditandatangani lalu disiarkan tanpa preflight | *lets heirs and guardians co-sign in a real wallet…*, *signs first only a co-signed SIKRIT instruction…* |
 | Batas per klien: 10 transaksi/menit, 6 kapsul baru/jam (memori per instance; peta klien dipangkas) | Pengurasan rent lewat spam `create_capsule` dari satu alamat | *rate-limits each client…* |
 | Kunci hanya di env server (`RELAYER_SECRET_KEY`, bukan `VITE_`), tidak pernah ke browser; bundle produksi dicek bebas kode relay | Kebocoran kunci lewat bundle | pemeriksaan bundle `dist/` |
 | Saldo di bawah 0,01 SOL → 503 berisi alamat relayer | Kegagalan bisu saat relayer habis | *rate-limits…* (relayer tanpa saldo) |
@@ -376,10 +378,11 @@ R18.
 ```bash
 npm run build                # anchor build: SBF + IDL (Solana 1.18.17, Anchor CLI 0.30.2)
 npm run test:rust            # 14 unit test: verifier Schnorr, komitmen anggota, validasi config, vektor lintas bahasa (liveness + update)
-npm test                     # 82 test: lifecycle di LiteSVM + SDK + client + relayer service + watcher (Node 24 LTS)
+npm test                     # 84 test: lifecycle di LiteSVM + SDK + client + relayer service + watcher (Node 24 LTS)
 npm run watcher -- --once <kapsul>   # watcher melawan devnet: scan semua kapsul, cek kapsul itu secara lokal
 npm run typecheck
 cd app && npm run e2e        # E2E Chrome: seluruh cerita warisan + cek privasi on-chain (SIK-16, SIK-19, SIK-22)
+cd app && npm run e2e:wallet # warisan dengan wallet asli (Wallet Standard, aturan priority fee Phantom) (SIK-23)
 cd app && npm run e2e:devnet # cerita yang sama lewat bundle produksi + relayer service melawan devnet (SIK-18, §7)
 RELAYER=browser npm run e2e:devnet  # sama, dengan relayer in-browser (fallback GitHub Pages)
 ```
@@ -606,3 +609,58 @@ devnet: 6 kapsul ter-scan, kedua kapsul bukti terbaca `claimed`, alamat acak ter
 **Batas & arah berikutnya:** pemilik harus menjalankan watcher di mesin yang terus menyala (VPS, Raspberry Pi). Scan
 penuh tumbuh dengan jumlah kapsul; pada skala besar, feed publik perubahan state yang difilter di perangkat
 mempertahankan sifat yang sama dengan data lebih kecil.
+
+---
+
+## 13. Wallet asli: relayer menandatangani lebih dulu (7 Okt 2026)
+
+### SIK-23 🟡 Wallet asli tidak bisa co-sign lewat relayer (CWE-440: Expected Behavior Violation)
+
+**Masalah:** untuk `guardian_confirm`, `guardian_veto` dan `claim`, app membangun transaksi dengan relayer sebagai fee
+payer, meminta wallet anggota menandatangani, lalu mengirimnya ke relayer. Phantom (dan wallet lain dengan aturan
+serupa) **menambahkan instruksi ComputeBudget** (`SetComputeUnitLimit` + `SetComputeUnitPrice`, priority fee) ke
+transaksi yang belum bertanda tangan apa pun dan belum punya instruksi compute-budget; transaksi yang sudah bertanda
+tangan dibiarkan apa adanya. Relayer menerima tepat satu instruksi, jadi menolak dengan *exactly one instruction per
+transaction*. Persona demo menandatangani di browser tanpa aturan ini, sehingga E2E lama tidak melihatnya. Dibuktikan
+dengan `app/e2e/wallet-flow.mjs`: wallet Wallet Standard yang disuntikkan ke halaman, meniru aturan Phantom, lulus 4/8
+langkah lalu gagal saat guardian mengonfirmasi. Dampak: ahli waris atau guardian yang memakai Phantom asli tidak bisa
+mengonfirmasi, memveto, atau mengklaim lewat relayer, alias jalur warisan untuk pengguna nyata macet. Tidak ada dana
+atau data yang terancam.
+
+**Opsi yang ditimbang:** (a) relayer mengizinkan ComputeBudget di bawah batas harga. Ditolak: priority fee dari wallet
+dibayar relayer (fee payer). Phantom memasang 200.000 CU × 100.000 µlamport = 20.000 lamport, 4× fee dasar per
+transaksi, jadi batas yang cukup longgar untuk Phantom justru melipatgandakan biaya relayer (bertentangan dengan
+SIK-21), dan nilainya ditentukan wallet, bukan kita. (b) **relayer menandatangani lebih dulu**, dipilih.
+
+**Perbaikan:** `POST /api/relay { transaction, sign: true }` (`relay.sign()`) menandatangani tanpa menyiarkan,
+dan hanya transaksi yang lolos **semua** aturan relay (`refusal()`: fee payer, tepat 1 instruksi SIKRIT dengan
+discriminator dikenal, akun persis, ≤ 2 tanda tangan, relayer bukan signer instruksi) serta rate limit dan cek saldo
+yang sama, **khusus** confirm/veto/claim (instruksi pemilik tidak butuh wallet, tetap lewat `relay`), dan **hanya
+bila simulasi program saat itu sukses** (`simulateTransaction` dengan `sigVerify: false`, karena co-signature belum
+ada). App (`FeePayer.signFirst`) meminta tanda tangan relayer dulu, memeriksa bahwa yang kembali adalah pesan yang sama
+persis dengan tanda tangan relayer yang sah, baru meminta wallet menandatangani; hasilnya dikirim lewat `relay` biasa
+(verifikasi semua tanda tangan + preflight). Relayer in-browser memakai urutan yang sama. Program on-chain tidak
+berubah.
+
+**Kenapa aman, dan biaya maksimum:** tanda tangan Ed25519 relayer mencakup seluruh pesan (instruksi, akun, blockhash),
+jadi tidak ada instruksi yang bisa ditambahkan sesudahnya tanpa membatalkannya, dan transaksi bertanda tangan tidak sah
+ditolak jaringan tanpa fee. Priority fee yang bisa dibebankan ke relayer: **0** (ComputeBudget tetap ditolak). Satu
+transaksi yang ditandatangani lebih dulu paling mahal **2 × 5.000 = 10.000 lamport**, sama dengan batas SIK-21. Bedanya
+dengan `relay`: pemegang transaksi bisa menyiarkannya sendiri tanpa preflight; karena simulasi harus sukses saat
+ditandatangani, fee itu hanya terbakar bila state kapsul berubah dalam masa berlaku blockhash (~1 menit), mis. pemilik
+membatalkan klaim tepat di antaranya. Rate limit dihitung bersama `relay` (10/menit per klien), jadi paling banyak
+100.000 lamport (0,0001 SOL) per klien per menit, dalam kasus terburuk yang sama sekali tidak berguna bagi penyerang.
+Wallet yang tetap memodifikasi transaksi bertanda tangan membatalkan tanda tangan relayer: aksinya gagal dengan pesan
+error, tanpa biaya.
+
+**Test:** *lets heirs and guardians co-sign in a real wallet: it signs first, so the wallet adds nothing (SIK-23)*
+(aturan Phantom dimodelkan di test: tanpa tanda tangan → 2 instruksi ComputeBudget ditambahkan dan relayer menolak;
+dengan `sign` → wallet tidak menambah apa pun, confirm dan claim diterima program asli, heir & guardian tetap 0 SOL)
+dan *signs first only a co-signed SIKRIT instruction the program accepts now, and never what a wallet changes (SIK-23)*
+(ditolak tanpa tanda tangan: priority fee 1.000.000.000 µlamport/CU (= 1,4 SOL) maupun 1 µlamport/CU, compute-unit
+limit ganda, ComputeBudget saja, transfer System yang disusupkan, fee payer lain, heartbeat dan `create_capsule`,
+confirm/claim sebelum klaim terbuka (422, simulasi gagal); transaksi bertanda tangan relayer yang ditambahi priority
+fee gagal verifikasi dan ditolak, saldo relayer tidak berubah; rate limit berlaku). Merah sebelum perbaikan (*exactly
+one instruction per transaction*, `sign` belum ada). E2E: `cd app && npm run e2e:wallet` hijau 8/8 langkah + cek
+chain (139 s relayer service, 141 s `RELAYER=browser`): wallet hanya menandatangani confirm dan claim, keduanya sudah
+bertanda tangan relayer, tanpa instruksi tambahan; tiap transaksi kapsul berisi satu instruksi SIKRIT.

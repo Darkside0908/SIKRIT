@@ -5,15 +5,15 @@
 >
 > **Scope:** the Anchor program (`programs/sikrit`, protocol v2.1), the client SDK (`sdk/`: Schnorr prover, HPKE,
 > Shamir, capsule kit, program client, watcher), the demo app (`app/`) and its relayer service (`app/api/relay.ts`).
-> **Dates:** 30 Sep – 4 Oct 2026. **Method:** manual review (cryptography and smart-contract security), real SBF
-> builds, 82 TypeScript tests (the lifecycle and relayer tests run the real SBF binary in LiteSVM with a
+> **Dates:** 30 Sep – 7 Oct 2026. **Method:** manual review (cryptography and smart-contract security), real SBF
+> builds, 84 TypeScript tests (the lifecycle and relayer tests run the real SBF binary in LiteSVM with a
 > time-travelling clock), 14 Rust unit tests, a 13-step browser end-to-end run on a local validator and on devnet, and
 > compute-unit benchmarks.
 >
-> **Result:** 22 findings: 3 Critical, 4 High, 6 Medium, 8 Low, 1 Info (design). 21 are fixed in code and covered by
+> **Result:** 23 findings: 3 Critical, 4 High, 7 Medium, 8 Low, 1 Info (design). 22 are fixed in code and covered by
 > tests; SIK-11 is mitigated in the client. What remains is listed openly as residual risks R1–R18. SIK-19 and SIK-20
 > led to protocol v2 (§2): a sealed roster and short-lived heartbeat proofs. SIK-21 and SIK-22 came from an independent
-> re-audit of the v2 code on 3 Oct.
+> re-audit of the v2 code on 3 Oct, SIK-23 from an end-to-end run with real wallets on 7 Oct.
 
 ## 1. Findings
 
@@ -41,6 +41,7 @@
 | SIK-20 | 🔵 Low | Heartbeat proofs never expired: a relayer that held one back could revive a silent owner once, or cancel a claim | Protocol v2: the proof binds an expiry at most one hour ahead of the cluster clock (§2) | ✅ Fixed |
 | SIK-21 | 🔵 Low | The relayer service paid for extra signatures: a heartbeat padded with throwaway signers made it pay up to 9× the fee | Exact account count per instruction and at most 1–2 signatures (§4) | ✅ Fixed |
 | SIK-22 | 🟡 Medium | A lost registration confirmation discarded the kit: the capsule was registered without one, and the owner's wallet could never register again | The kit is filed as pending before the broadcast; the dashboard adopts the pending kit that matches the chain | ✅ Fixed |
+| SIK-23 | 🟡 Medium | Heirs and guardians on a real wallet (Phantom) could not confirm, veto or claim through the relayer: the wallet adds priority-fee instructions, which the relayer refuses | The relayer signs first (only what it would relay and what the program accepts now), so the wallet signs a frozen message (§4) | ✅ Fixed |
 
 Selected details (the Indonesian edition has all of them):
 
@@ -90,6 +91,34 @@ Selected details (the Indonesian edition has all of them):
   in-browser relayer): it failed before the fix, with an *Alive* capsule and "No copy of the kit in this browser", and
   passes after it. The kit is filed as pending before the broadcast, and the dashboard adopts the pending kit that
   `verifyKit` matches to the chain (salts and share hashes are fresh per seal, so exactly one attempt can match).
+- **SIK-23.** For confirm, veto and claim the app built a transaction with the relayer as fee payer, had the member's
+  wallet sign it, then posted it to the relayer. Phantom (and wallets with a similar rule) prepends ComputeBudget
+  instructions (`SetComputeUnitLimit` + `SetComputeUnitPrice`, a priority fee) to a transaction that carries no
+  signature and no compute-budget instruction yet, and leaves an already signed one alone. The relayer accepts exactly
+  one instruction, so it refused. The demo personas sign in the browser without that rule, so the earlier end-to-end
+  run never saw it; `app/e2e/wallet-flow.mjs` (a Wallet Standard wallet injected into the page, following Phantom's
+  rule) passed 4 of 8 steps and failed at the guardian's confirmation. Impact: real-wallet heirs and guardians could not
+  act through the relayer; no funds or data at risk. Accepting compute-budget instructions under a price cap was
+  rejected: the relayer, as fee payer, pays the priority fee, and Phantom's own (200,000 CU × 100,000 µlamports =
+  20,000 lamports, 4× the base fee) would have to fit under the cap, undoing SIK-21. Instead,
+  `POST /api/relay { transaction, sign: true }` signs without broadcasting, only for confirm/veto/claim, only what passes
+  every relay rule above (same rate limit and balance check), and only if the program accepts it right now (simulated
+  with `sigVerify: false`, the co-signature still missing). The app checks that the same message came back with a valid
+  relayer signature, then asks the wallet; the result goes through the normal relay path. The relayer's signature
+  covers the whole message, so nothing can be added afterwards (an invalidly signed transaction is dropped without a
+  fee). **Maximum cost:** priority fee 0 (still refused); at most 2 × 5,000 = 10,000 lamports per pre-signed
+  transaction, the SIK-21 bound. Since its holder can broadcast it without preflight, that fee burns only if the
+  capsule's state changes within the blockhash's lifetime (~1 minute, e.g. the owner cancels the claim in between);
+  with the shared 10/minute limit that is at most 100,000 lamports (0.0001 SOL) per client per minute. The on-chain
+  program is unchanged. Tests: *lets heirs and guardians co-sign in a real wallet…* (Phantom's rule modelled: unsigned →
+  two compute-budget instructions added and refused; signed first → nothing added, confirm and claim accepted by the
+  real binary, heir and guardian still at 0 SOL) and *signs first only a co-signed SIKRIT instruction…* (refused: a
+  1,000,000,000 µlamport/CU priority fee (1.4 SOL) and a 1 µlamport/CU one, a duplicated compute-unit limit, a lone
+  compute-budget instruction, a smuggled System transfer, another fee payer, heartbeat and `create_capsule`,
+  confirm/claim before a claim is open (422); a relayer-signed transaction with a priority fee added fails
+  verification and is refused, relayer balance unchanged; rate limit applies). Red before the fix, green after;
+  `cd app && npm run e2e:wallet` passes all 8 steps plus the chain check (139 s relayer service, 141 s
+  `RELAYER=browser`).
 
 ## 2. The protocol after the fixes (v2.1)
 
@@ -194,10 +223,12 @@ Threat model: anyone on the internet can POST transactions to it.
 | Its key may appear in the instruction only as `create_capsule`'s rent payer | Its signature authorizing anything else: a System transfer out of the relayer, the relayer acting as a guardian | *refuses every transaction…* |
 | Every other signature verified before sending; preflight on | Burning fees with transactions bound to fail | *refuses…*, *hands program errors back with their logs…* |
 | Exactly the instruction's accounts, and at most one or two signatures (SIK-21) | Paying for throwaway signers padded onto an instruction (5,000 lamports per signature) | *refuses every transaction…* (heartbeat + 8 signers, confirmation + 1 signer, a heartbeat asking for a second signature) |
+| Signing first (`{ sign: true }`, SIK-23) only for confirm/veto/claim, under every rule above, and only if the program accepts the transaction now; the signed message cannot be changed | A wallet adding a priority fee the relayer pays; a failing transaction signed and broadcast without preflight | *lets heirs and guardians co-sign in a real wallet…*, *signs first only a co-signed SIKRIT instruction…* |
 | Per client: 10 transactions/minute, 6 new capsules/hour | Draining rent by spamming `create_capsule` from one address | *rate-limits each client…* |
 | Key only in a server environment variable, never `VITE_`-prefixed; the production bundle checked free of relay code | Key leaking through the browser bundle | bundle inspection |
 
-The 1 Oct review found nothing in the released code; the 3 Oct re-audit found the per-signature fee gap (SIK-21). The
+The 1 Oct review found nothing in the released code; the 3 Oct re-audit found the per-signature fee gap (SIK-21); the
+7 Oct real-wallet end-to-end run found that wallets add priority fees to unsigned transactions (SIK-23). The
 tests drive the service against the real program in LiteSVM, including a whole relayed inheritance in which the heir
 and the guardian hold no SOL at all.
 
@@ -261,9 +292,10 @@ claim. `--once` against the public devnet RPC read both proof capsules as claime
 ```bash
 npm run build                 # anchor build: SBF + IDL (Solana 1.18.17, Anchor CLI 0.30.2)
 npm run test:rust             # 14 Rust unit tests: Schnorr verifier, member commitments, config, cross-language vectors
-npm test                      # 82 tests on Node 24: LiteSVM lifecycle, SDK vectors and attacks, client, relayer, watcher
+npm test                      # 84 tests on Node 24: LiteSVM lifecycle, SDK vectors and attacks, client, relayer, watcher
 npm run watcher -- --once <capsule>   # the watcher against devnet: scan every capsule, check that one locally
 cd app && npm run e2e         # the whole story in Chrome on a local validator (registration reply dropped, SIK-22) + on-chain privacy check
+cd app && npm run e2e:wallet  # the inheritance with real wallets (Wallet Standard, Phantom's priority-fee rule, SIK-23)
 npm run e2e:devnet            # the same through the production bundle and the relayer service, on devnet
 ```
 

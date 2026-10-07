@@ -4,6 +4,7 @@
  *
  *   npm run localnet         validator + app on http://localhost:5173
  *   npm run e2e              same, then drives the whole demo story in Chrome (e2e/demo-flow.mjs)
+ *   npm run e2e:wallet       same, then the inheritance with real wallets (e2e/wallet-flow.mjs, Phantom's rule)
  *
  * A validator or dev server that is already running is reused instead of started.
  * Build the program first (`npm run build` in the repo root).
@@ -20,6 +21,7 @@ const PROGRAM_SO = `${ROOT}target/deploy/sikrit.so`;
 const RPC = "http://127.0.0.1:8899";
 const APP_URL = "http://localhost:5173";
 const e2e = process.argv.includes("--e2e");
+const FLOW = process.argv.includes("--wallet") ? "e2e/wallet-flow.mjs" : "e2e/demo-flow.mjs";
 // Vite's own entry point rather than `npx`: killing an `npx` wrapper leaves the dev server running.
 const VITE = fileURLToPath(new URL("../node_modules/vite/bin/vite.js", import.meta.url));
 
@@ -82,7 +84,7 @@ try {
   console.log(`\n  SIKRIT demo ready → ${APP_URL}  (cluster ${RPC}, program ${PROGRAM_ID})\n`);
 
   if (e2e) {
-    const flow = run("node", ["e2e/demo-flow.mjs"], { env: { ...env, BASE_URL: APP_URL, RPC_URL: RPC } });
+    const flow = run("node", [FLOW], { env: { ...env, BASE_URL: APP_URL, RPC_URL: RPC } });
     flow.on("exit", (code) => stop(code ?? 1));
   }
 } catch (error) {

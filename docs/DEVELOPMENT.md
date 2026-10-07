@@ -17,6 +17,7 @@ sdk/watch.ts                 Watcher: scan semua kapsul (satu getProgramAccounts
 scripts/watcher.ts           `npm run watcher`: watcher sebagai perintah, push opsional (ntfy/webhook)
 app/                         Frontend demo (Vite + React + Tailwind + wallet adapter), memakai sdk/* langsung
 app/e2e/demo-flow.mjs        E2E Chrome: owner → heartbeat → klaim → guardian 2-of-3 → heir memulihkan seed
+app/e2e/wallet-flow.mjs      E2E wallet asli (Wallet Standard + aturan priority fee Phantom): relayer menandatangani dulu (SIK-23)
 docs/                        Pitch, spesifikasi teknis, security review
 ```
 
@@ -48,6 +49,7 @@ npm run build                 # sekali: binary program untuk validator lokal
 cd app && npm install
 npm run localnet              # solana-test-validator + program SIKRIT + app di http://localhost:5173
 npm run e2e                   # (opsional) jalankan seluruh cerita demo otomatis di Chrome, ~2,5 menit
+npm run e2e:wallet            # (opsional) warisan dengan wallet asli (Wallet Standard, aturan priority fee Phantom, SIK-23)
 ```
 
 E2E secara default membuang balasan transaksi registrasi setelah transaksinya terkirim (seperti function relayer yang
