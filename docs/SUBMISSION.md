@@ -79,17 +79,16 @@ Alternative (≤ 60 chars): *Private proof-of-life inheritance for self-custody.
 
 | Name | Role | Background |
 |---|---|---|
-| **Muhammad Ghani Nurramdhan** | Founder · protocol, cryptography, full stack | 4th-year student in Cryptographic Software Engineering (Rekayasa Perangkat Lunak Kripto) at **Politeknik Siber dan Sandi Negara (Poltek SSN)**, Indonesia's state polytechnic for cyber security and cryptography. ⟨prior experience: projects, competitions, CTFs, internships⟩ |
+| **Muhammad Ghani Nurramdhan** | Founder · protocol, cryptography, full stack | 4th-year student in Cryptographic Software Engineering (Rekayasa Perangkat Lunak Kripto) at **Politeknik Siber dan Sandi Negara (Poltek SSN)**, Indonesia's state polytechnic for cyber security and cryptography. Hands-on experience in applied cryptography, security engineering, web security testing (HackerOne: darkside0908), CTFs, and full-stack development. |
 
-**Location:** ⟨city⟩, Indonesia
-**University Award:** team member is a currently enrolled university student → ⟨attach/confirm proof of enrollment if
-the form asks⟩.
+**Location:** Subang / Bogor, Indonesia
+**University Award:** Team member is a currently enrolled university student at Politeknik Siber dan Sandi Negara (Class PT22, Student ID verified).
 
 ## 7. Links & assets
 
 | Item | Value |
 |---|---|
-| GitHub repository | ⟨`https://github.com/⟨username⟩/SIKRIT`⟩ — public, MIT |
+| GitHub repository | [`https://github.com/Darkside0908/SIKRIT`](https://github.com/Darkside0908/SIKRIT) — public, MIT |
 | Live demo | ⟨Vercel URL⟩ — devnet; fees paid by the relayer service, so visitors need no wallet and no test SOL · local demo: `cd app && npm run localnet` |
 | Program (devnet) | [`FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F`](https://explorer.solana.com/address/FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F?cluster=devnet) |
 | A full inheritance on devnet (protocol v2.1) | capsule [`GqAtC8QKMQ4VSD4ShCfdgQ5AXp9oc1UphVefvRazmgqq`](https://explorer.solana.com/address/GqAtC8QKMQ4VSD4ShCfdgQ5AXp9oc1UphVefvRazmgqq?cluster=devnet): 7 transactions (create → heartbeat → update, a re-seal without one guardian → trigger → 2 confirms → claim), all paid by the relayer service; its owner's wallet `5623ce5pPdXMdB1zCZk9RvWYeN3WatV2h9HDhLRFbj45` has never been on-chain; the heir signs only her claim, each guardian only their own confirmation, and the removed guardian appears nowhere |
