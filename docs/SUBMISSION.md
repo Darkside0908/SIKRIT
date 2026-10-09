@@ -92,8 +92,8 @@ Alternative (≤ 60 chars): *Private proof-of-life inheritance for self-custody.
 | Live demo | ⟨Vercel URL⟩ — devnet; fees paid by the relayer service, so visitors need no wallet and no test SOL · local demo: `cd app && npm run localnet` |
 | Program (devnet) | [`FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F`](https://explorer.solana.com/address/FJKqfFBf6Sw87eAfpgDbibiWUKhpmdVjFxexc9BTc45F?cluster=devnet) |
 | A full inheritance on devnet (protocol v2.1) | capsule [`GqAtC8QKMQ4VSD4ShCfdgQ5AXp9oc1UphVefvRazmgqq`](https://explorer.solana.com/address/GqAtC8QKMQ4VSD4ShCfdgQ5AXp9oc1UphVefvRazmgqq?cluster=devnet): 7 transactions (create → heartbeat → update, a re-seal without one guardian → trigger → 2 confirms → claim), all paid by the relayer service; its owner's wallet `5623ce5pPdXMdB1zCZk9RvWYeN3WatV2h9HDhLRFbj45` has never been on-chain; the heir signs only her claim, each guardian only their own confirmation, and the removed guardian appears nowhere |
-| Presentation video (2–3 min) | ⟨YouTube/Loom link⟩ — script: `docs/VIDEO-SCRIPT.md` §1 |
-| Product demo video (≤ 3 min) | ⟨YouTube/Loom link⟩ — script: `docs/VIDEO-SCRIPT.md` §2 |
+| Presentation video (2–3 min) | [Google Drive Stream (MP4)](https://drive.google.com/file/d/1jyg1pizevOycwZBSY5eOPoL43sqKHn3B/view?usp=drivesdk) · local: `docs/video/pitch/SIKRIT_Pitch_Presentation_2026.mp4` |
+| Product demo video (≤ 3 min) | [Google Drive Stream (MP4)](https://drive.google.com/file/d/1P4xu8aycfQguAb05LadiDiWTuyaodBBF/view?usp=drivesdk) · local: `docs/video/demo/SIKRIT_Product_Demo_2026.mp4` |
 | Pitch deck (PDF) | `docs/deck/SIKRIT-deck.pdf` (source `docs/deck/index.html`) |
 | Logo | `docs/brand/sikrit-logo-1024.png` · cover image `docs/brand/sikrit-cover.png` |
 | Screenshots | `docs/screenshots/*.webp` |
